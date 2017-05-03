@@ -453,10 +453,15 @@ static inline struct kmem_cache *cache_from_obj(struct kmem_cache *s, void *x)
 		return s;
 
 	cachep = virt_to_cache(x);
-	if (WARN(cachep && cachep != s,
-		  "%s: Wrong slab cache. %s but object is from %s\n",
-		  __func__, s->name, cachep->name))
+	if (cachep && cachep != s) {
+#ifdef CONFIG_BUG_ONE_DATE_CORRUPTION
+		BUG();
+#else
+		WARN_ONCE(1, "%s: Wrong slab cache. %s but object is from %s\n",
+			     __func__, s->name, cachep->name);
+#endif
 		print_tracking(cachep, x);
+	}
 	return cachep;
 }
 
