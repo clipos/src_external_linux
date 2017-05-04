@@ -125,6 +125,12 @@ static inline int kmem_cache_debug(struct kmem_cache *s)
 #endif
 }
 
+static inline bool has_sanitize_verify(struct kmem_cache *s)
+{
+	return IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) &&
+	       slab_want_init_on_free(s);
+}
+
 void *fixup_red_left(struct kmem_cache *s, void *p)
 {
 	if (kmem_cache_debug(s) && s->flags & SLAB_RED_ZONE)
@@ -1447,7 +1453,7 @@ static inline bool slab_free_freelist_hook(struct kmem_cache *s,
 							   : 0;
 			memset((char *)object + s->inuse, 0,
 			       s->size - s->inuse - rsize);
-			if (s->ctor)
+			if (!IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) && s->ctor)
 				s->ctor(object);
 			set_freepointer(s, object, p);
 			p = object;
@@ -1496,7 +1502,7 @@ static void *setup_object(struct kmem_cache *s, struct page *page,
 {
 	setup_object_debug(s, page, object);
 	object = kasan_init_slab_obj(s, object);
-	if (unlikely(s->ctor)) {
+	if (unlikely(s->ctor) && !has_sanitize_verify(s)) {
 		kasan_unpoison_object_data(s, object);
 		s->ctor(object);
 		kasan_poison_object_data(s, object);
@@ -2766,7 +2772,16 @@ redo:
 	if (unlikely(slab_want_init_on_free(s)) && object)
 		memset(object + s->offset, 0, sizeof(void *));
 
-	if (unlikely(slab_want_init_on_alloc(gfpflags, s)) && object)
+	if (has_sanitize_verify(s) && object) {
+		/* KASAN hasn't unpoisoned the object yet (this is done in the
+		 * post-alloc hook), so let's do it temporarily.
+		 */
+		kasan_unpoison_object_data(s, object);
+		BUG_ON(memchr_inv(object, 0, s->object_size));
+		if (s->ctor)
+			s->ctor(object);
+		kasan_poison_object_data(s, object);
+	} else if (unlikely(slab_want_init_on_alloc(gfpflags, s)) && object)
 		memset(object, 0, s->object_size);
 
 	slab_post_alloc_hook(s, gfpflags, 1, &object);
@@ -3187,7 +3202,23 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
 	local_irq_enable();
 
 	/* Clear memory outside IRQ disabled fastpath loop */
-	if (unlikely(slab_want_init_on_alloc(flags, s))) {
+	if (has_sanitize_verify(s)) {
+		size_t offset = s->offset ? 0 : sizeof(void *);
+		int j;
+
+		for (j = 0; j < i; j++) {
+			/* KASAN hasn't unpoisoned the object yet (this is done
+			 * in the post-alloc hook), so let's do it temporarily.
+			 */
+			kasan_unpoison_object_data(s, p[j]);
+			BUG_ON(memchr_inv(p[j] + offset, 0, s->object_size - offset));
+			if (s->ctor)
+				s->ctor(p[j]);
+			kasan_poison_object_data(s, p[j]);
+			if (unlikely(flags & __GFP_ZERO) && offset)
+				memset(p[j], 0, sizeof(void *));
+		}
+	} else if (unlikely(slab_want_init_on_alloc(flags, s))) {
 		int j;
 
 		for (j = 0; j < i; j++)
