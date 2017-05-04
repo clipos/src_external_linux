@@ -1769,6 +1769,14 @@ config SLAB_SANITIZE
 
 	  For slabs with debug poisoning enabling, this has no impact.
 
+config SLAB_SANITIZE_VERIFY
+	depends on SLAB_SANITIZE && PAGE_SANITIZE
+	default y
+	bool "Verify sanitized SLAB allocations"
+	help
+	  Verify that newly allocated slab allocations are zeroed to detect
+	  write-after-free bugs.
+
 config SHUFFLE_PAGE_ALLOCATOR
 	bool "Page allocator randomization"
 	default SLAB_FREELIST_RANDOM && ACPI_NUMA
