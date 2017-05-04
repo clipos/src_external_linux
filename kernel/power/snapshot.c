@@ -1140,9 +1140,11 @@ void free_basic_memory_bitmaps(void)
 
 void clear_free_pages(void)
 {
-#ifdef CONFIG_PAGE_POISONING_ZERO
 	struct memory_bitmap *bm = free_pages_map;
 	unsigned long pfn;
+
+	if (!IS_ENABLED(CONFIG_PAGE_POISONING_ZERO) && !want_init_on_free())
+		return;
 
 	if (WARN_ON(!(free_pages_map)))
 		return;
@@ -1157,7 +1159,6 @@ void clear_free_pages(void)
 	}
 	memory_bm_position_reset(bm);
 	pr_info("free pages cleared after restore\n");
-#endif /* PAGE_POISONING_ZERO */
 }
 
 /**
