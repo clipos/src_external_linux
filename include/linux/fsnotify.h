@@ -83,8 +83,12 @@ static inline void fsnotify_dentry(struct dentry *dentry, __u32 mask)
 static inline int fsnotify_file(struct file *file, __u32 mask)
 {
 	const struct path *path = &file->f_path;
+	struct inode *inode = file_inode(file);
 
 	if (file->f_mode & FMODE_NONOTIFY)
+		return 0;
+
+	if (mask & (FS_ACCESS | FS_MODIFY) && is_sidechannel_device(inode))
 		return 0;
 
 	return fsnotify_parent(path->dentry, mask, path, FSNOTIFY_EVENT_PATH);
