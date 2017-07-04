@@ -2253,7 +2253,7 @@ void rcu_force_quiescent_state(void)
 EXPORT_SYMBOL_GPL(rcu_force_quiescent_state);
 
 /* Perform RCU core processing work for the current CPU.  */
-static __latent_entropy void rcu_core(struct softirq_action *unused)
+static __latent_entropy void rcu_core(void)
 {
 	unsigned long flags;
 	struct rcu_data *rdp = raw_cpu_ptr(&rcu_data);
