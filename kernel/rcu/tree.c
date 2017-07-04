@@ -2659,7 +2659,7 @@ rcu_check_gp_start_stall(struct rcu_node *rnp, struct rcu_data *rdp)
  * structures.  This may be called only from the CPU to whom the rdp
  * belongs.
  */
-static __latent_entropy void rcu_process_callbacks(struct softirq_action *unused)
+static __latent_entropy void rcu_process_callbacks(void)
 {
 	unsigned long flags;
 	struct rcu_data *rdp = raw_cpu_ptr(&rcu_data);
