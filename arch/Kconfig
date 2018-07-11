@@ -546,6 +546,8 @@ config GCC_PLUGIN_STACKLEAK
 	bool "Erase the kernel stack before returning from syscalls"
 	depends on GCC_PLUGINS
 	depends on HAVE_ARCH_STACKLEAK
+	imply VMAP_STACK
+	imply SCHED_STACK_END_CHECK
 	help
 	  This option makes the kernel erase the kernel stack before
 	  returning from system calls. That reduces the information which
@@ -561,6 +563,18 @@ config GCC_PLUGIN_STACKLEAK
 	  This plugin was ported from grsecurity/PaX. More information at:
 	   * https://grsecurity.net/
 	   * https://pax.grsecurity.net/
+
+config STACKLEAK_TRACK_MIN_SIZE
+    int "Minimum stack frame size of functions tracked by STACKLEAK"
+    default 100
+    range 0 4096
+    depends on GCC_PLUGIN_STACKLEAK
+    help
+      The STACKLEAK gcc plugin instruments the kernel code for tracking
+      the lowest border of the kernel stack (and for some other purposes).
+      It inserts the stackleak_track_stack() call for the functions with
+      a stack frame size greater than or equal to this parameter.
+      If unsure, leave the default value 100.
 
 config HAVE_CC_STACKPROTECTOR
 	bool
