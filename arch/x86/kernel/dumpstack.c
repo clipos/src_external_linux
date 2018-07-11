@@ -418,3 +418,34 @@ void show_regs(struct pt_regs *regs)
 	if (!user_mode(regs))
 		show_trace_log_lvl(current, regs, NULL, KERN_DEFAULT);
 }
+
+#ifdef CONFIG_GCC_PLUGIN_STACKLEAK
+void __used stackleak_check_alloca(unsigned long size)
+{
+	unsigned long sp = (unsigned long)&sp;
+	struct stack_info stack_info = {0};
+	unsigned long visit_mask = 0;
+	unsigned long stack_left;
+
+	BUG_ON(get_stack_info(&sp, current, &stack_info, &visit_mask));
+
+	stack_left = sp - (unsigned long)stack_info.begin;
+
+	if (size >= stack_left) {
+		/*
+		 * Kernel stack depth overflow is detected, let's report that.
+		 * If CONFIG_VMAP_STACK is enabled, we can safely use BUG().
+		 * If CONFIG_VMAP_STACK is disabled, BUG() handling can corrupt
+		 * the neighbour memory. CONFIG_SCHED_STACK_END_CHECK calls
+		 * panic() in a similar situation, so let's do the same if that
+		 * option is on. Otherwise just use BUG() and hope for the best.
+		 */
+#if !defined(CONFIG_VMAP_STACK) && defined(CONFIG_SCHED_STACK_END_CHECK)
+		panic("alloca() over the kernel stack boundary\n");
+#else
+		BUG();
+#endif
+	}
+}
+EXPORT_SYMBOL(stackleak_check_alloca);
+#endif
