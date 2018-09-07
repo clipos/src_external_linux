@@ -8,7 +8,7 @@ source security/keys/Kconfig
 
 config SECURITY_DMESG_RESTRICT
 	bool "Restrict unprivileged access to the kernel syslog"
-	default n
+	default y
 	help
 	  This enforces restrictions on unprivileged users reading the kernel
 	  syslog via dmesg(8).
@@ -18,10 +18,34 @@ config SECURITY_DMESG_RESTRICT
 
 	  If you are unsure how to answer this question, answer N.
 
+config SECURITY_PERF_EVENTS_RESTRICT
+	bool "Restrict unprivileged use of performance events"
+	depends on PERF_EVENTS
+	default y
+	help
+	  If you say Y here, the kernel.perf_event_paranoid sysctl
+	  will be set to 3 by default, and no unprivileged use of the
+	  perf_event_open syscall will be permitted unless it is
+	  changed.
+
+config SECURITY_TIOCSTI_RESTRICT
+	bool "Restrict unprivileged use of tiocsti command injection"
+	default y
+	help
+	  This enforces restrictions on unprivileged users injecting commands
+	  into other processes which share a tty session using the TIOCSTI
+	  ioctl. This option makes TIOCSTI use require CAP_SYS_ADMIN.
+
+	  If this option is not selected, no restrictions will be enforced
+	  unless the tiocsti_restrict sysctl is explicitly set to (1).
+
+	  If you are unsure how to answer this question, answer N.
+
 config SECURITY
 	bool "Enable different security models"
 	depends on SYSFS
 	depends on MULTIUSER
+	default y
 	help
 	  This allows you to choose different security modules to be
 	  configured into your kernel.
@@ -48,6 +72,7 @@ config SECURITYFS
 config SECURITY_NETWORK
 	bool "Socket and Networking Security Hooks"
 	depends on SECURITY
+	default y
 	help
 	  This enables the socket and networking security hooks.
 	  If enabled, a security module can use these hooks to
@@ -155,6 +180,7 @@ config HARDENED_USERCOPY
 	depends on HAVE_HARDENED_USERCOPY_ALLOCATOR
 	select BUG
 	imply STRICT_DEVMEM
+	default y
 	help
 	  This option checks for obviously wrong memory regions when
 	  copying memory to/from the kernel (via copy_to_user() and
@@ -167,7 +193,6 @@ config HARDENED_USERCOPY
 config HARDENED_USERCOPY_FALLBACK
 	bool "Allow usercopy whitelist violations to fallback to object size"
 	depends on HARDENED_USERCOPY
-	default y
 	help
 	  This is a temporary option that allows missing usercopy whitelists
 	  to be discovered via a WARN() to the kernel log, instead of
@@ -192,9 +217,35 @@ config HARDENED_USERCOPY_PAGESPAN
 config FORTIFY_SOURCE
 	bool "Harden common str/mem functions against buffer overflows"
 	depends on ARCH_HAS_FORTIFY_SOURCE
+	default y
 	help
 	  Detect overflows of buffers in common string and memory functions
 	  where the compiler can determine and validate the buffer sizes.
+
+config FORTIFY_SOURCE_STRICT_STRING
+	bool "Harden common functions against buffer overflows"
+	depends on FORTIFY_SOURCE
+	depends on EXPERT
+	help
+	  Perform stricter overflow checks catching overflows within objects
+	  for common C string functions rather than only between objects.
+
+	  This is not yet intended for production use, only bug finding.
+
+config PAGE_SANITIZE
+	bool "Sanitize pages"
+	default y
+	help
+	  Zero fill page allocations on free, reducing the lifetime of
+	  sensitive data and helping to mitigate use-after-free bugs.
+
+config PAGE_SANITIZE_VERIFY
+	bool "Verify sanitized pages"
+	depends on PAGE_SANITIZE
+	default y
+	help
+	  Verify that newly allocated pages are zeroed to detect
+	  write-after-free bugs.
 
 config STATIC_USERMODEHELPER
 	bool "Force all usermode helper calls through a single binary"
@@ -230,6 +281,53 @@ config STATIC_USERMODEHELPER_PATH
 
 	  If you wish for all usermode helper programs to be disabled,
 	  specify an empty string here (i.e. "").
+
+config LOCK_DOWN_KERNEL
+	bool "Allow the kernel to be 'locked down'"
+	help
+	  Allow the kernel to be locked down.  Locking down the kernel turns
+	  off various features that might otherwise allow access to the kernel
+	  image (eg. setting MSR registers).
+
+	  Note, however, that locking down your kernel will prevent some
+	  drivers from functioning because allowing manual configuration of
+	  hardware parameters is forbidden, lest a device be used to access the
+	  kernel by DMA.  This mostly applies to ISA devices.
+
+	  The kernel lockdown can be triggered by adding lockdown=1 to the
+	  kernel command line.
+
+config LOCK_DOWN_MANDATORY
+	bool "Make kernel lockdown mandatory"
+	depends on LOCK_DOWN_KERNEL
+	help
+	  Makes the lockdown non-negotiable.  It is always on and cannot be
+	  disabled.
+
+config ALLOW_LOCKDOWN_LIFT_BY_SYSRQ
+	bool "Allow the kernel lockdown to be lifted by SysRq"
+	depends on LOCK_DOWN_KERNEL
+	depends on !LOCK_DOWN_MANDATORY
+	depends on MAGIC_SYSRQ
+	depends on X86
+	help
+	  Allow the lockdown on a kernel to be lifted, by pressing a SysRq key
+	  combination on a wired keyboard.  On x86, this is SysRq+x.
+
+config LOCK_DOWN_IN_EFI_SECURE_BOOT
+	bool "Lock down the kernel in EFI Secure Boot mode"
+	default n
+	select LOCK_DOWN_KERNEL
+	depends on EFI
+	help
+	  UEFI Secure Boot provides a mechanism for ensuring that the firmware
+	  will only load signed bootloaders and kernels.  Secure boot mode may
+	  be determined from EFI variables provided by the system firmware if
+	  not indicated by the boot parameters.
+
+	  Enabling this option turns on results in kernel lockdown being
+	  triggered if EFI Secure Boot is set.
+
 
 source security/selinux/Kconfig
 source security/smack/Kconfig
@@ -278,4 +376,3 @@ config DEFAULT_SECURITY
 	default "" if DEFAULT_SECURITY_DAC
 
 endmenu
-

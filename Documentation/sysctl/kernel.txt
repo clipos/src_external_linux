@@ -87,11 +87,13 @@ show up in /proc/sys/kernel:
 - shmmni
 - softlockup_all_cpu_backtrace
 - soft_watchdog
+- stack_erasing
 - stop-a                      [ SPARC only ]
 - sysrq                       ==> Documentation/admin-guide/sysrq.rst
 - sysctl_writes_strict
 - tainted
 - threads-max
+- tiocsti_restrict
 - unknown_nmi_panic
 - watchdog
 - watchdog_thresh
@@ -962,6 +964,23 @@ detect a hard lockup condition.
 
 ==============================================================
 
+stack_erasing
+
+This parameter can be used to control kernel stack erasing at the end
+of syscalls for kernels built with CONFIG_GCC_PLUGIN_STACKLEAK.
+
+That erasing reduces the information which kernel stack leak bugs
+can reveal and blocks some uninitialized stack variable attacks.
+The tradeoff is the performance impact: on a single CPU system kernel
+compilation sees a 1% slowdown, other systems and workloads may vary.
+
+  0: kernel stack erasing is disabled, STACKLEAK_METRICS are not updated.
+
+  1: kernel stack erasing is enabled (default), it is performed before
+     returning to the userspace at the end of syscalls.
+
+==============================================================
+
 tainted:
 
 Non-zero if the kernel has been tainted. Numeric values, which can be
@@ -1013,6 +1032,26 @@ EINVAL occurs.
 The value written is checked against the available RAM pages. If the
 thread structures would occupy too much (more than 1/8th) of the
 available RAM pages threads-max is reduced accordingly.
+
+==============================================================
+
+tiocsti_restrict:
+
+This toggle indicates whether unprivileged users are prevented
+from using the TIOCSTI ioctl to inject commands into other processes
+which share a tty session.
+
+When tiocsti_restrict is set to (0) there are no restrictions(accept
+the default restriction of only being able to injection commands into
+one's own tty). When tiocsti_restrict is set to (1), users must
+have CAP_SYS_ADMIN to use the TIOCSTI ioctl.
+
+When user namespaces are in use, the check for the capability
+CAP_SYS_ADMIN is done against the user namespace that originally
+opened the tty.
+
+The kernel config option CONFIG_SECURITY_TIOCSTI_RESTRICT sets the
+default value of tiocsti_restrict.
 
 ==============================================================
 
