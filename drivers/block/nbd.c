@@ -76,6 +76,7 @@ struct link_dead_args {
 #define NBD_HAS_CONFIG_REF		4
 #define NBD_BOUND			5
 #define NBD_DESTROY_ON_DISCONNECT	6
+#define NBD_DISCONNECT_ON_CLOSE 	7
 
 struct nbd_config {
 	u32 flags;
@@ -138,6 +139,7 @@ static void nbd_config_put(struct nbd_device *nbd);
 static void nbd_connect_reply(struct genl_info *info, int index);
 static int nbd_genl_status(struct sk_buff *skb, struct genl_info *info);
 static void nbd_dead_link_work(struct work_struct *work);
+static void nbd_disconnect_and_put(struct nbd_device *nbd);
 
 static inline struct device *nbd_to_dev(struct nbd_device *nbd)
 {
@@ -173,9 +175,12 @@ static const struct device_attribute pid_attr = {
 static void nbd_dev_remove(struct nbd_device *nbd)
 {
 	struct gendisk *disk = nbd->disk;
+	struct request_queue *q;
+
 	if (disk) {
+		q = disk->queue;
 		del_gendisk(disk);
-		blk_cleanup_queue(disk->queue);
+		blk_cleanup_queue(q);
 		blk_mq_free_tag_set(&nbd->tag_set);
 		disk->private_data = NULL;
 		put_disk(disk);
@@ -231,9 +236,18 @@ static void nbd_size_clear(struct nbd_device *nbd)
 static void nbd_size_update(struct nbd_device *nbd)
 {
 	struct nbd_config *config = nbd->config;
+	struct block_device *bdev = bdget_disk(nbd->disk, 0);
+
 	blk_queue_logical_block_size(nbd->disk->queue, config->blksize);
 	blk_queue_physical_block_size(nbd->disk->queue, config->blksize);
 	set_capacity(nbd->disk, config->bytesize >> 9);
+	if (bdev) {
+		if (bdev->bd_disk)
+			bd_set_size(bdev, config->bytesize);
+		else
+			bdev->bd_invalidated = 1;
+		bdput(bdev);
+	}
 	kobject_uevent(&nbd_to_dev(nbd)->kobj, KOBJ_CHANGE);
 }
 
@@ -243,6 +257,8 @@ static void nbd_size_set(struct nbd_device *nbd, loff_t blocksize,
 	struct nbd_config *config = nbd->config;
 	config->blksize = blocksize;
 	config->bytesize = blocksize * nr_blocks;
+	if (nbd->task_recv != NULL)
+		nbd_size_update(nbd);
 }
 
 static void nbd_complete_rq(struct request *req)
@@ -1109,7 +1125,6 @@ static int nbd_start_device_ioctl(struct nbd_device *nbd, struct block_device *b
 	if (ret)
 		return ret;
 
-	bd_set_size(bdev, config->bytesize);
 	if (max_part)
 		bdev->bd_invalidated = 1;
 	mutex_unlock(&nbd->config_lock);
@@ -1278,6 +1293,12 @@ out:
 static void nbd_release(struct gendisk *disk, fmode_t mode)
 {
 	struct nbd_device *nbd = disk->private_data;
+	struct block_device *bdev = bdget_disk(disk, 0);
+
+	if (test_bit(NBD_DISCONNECT_ON_CLOSE, &nbd->config->runtime_flags) &&
+			bdev->bd_openers == 0)
+		nbd_disconnect_and_put(nbd);
+
 	nbd_config_put(nbd);
 	nbd_put(nbd);
 }
@@ -1677,6 +1698,10 @@ again:
 				&config->runtime_flags);
 			put_dev = true;
 		}
+		if (flags & NBD_CFLAG_DISCONNECT_ON_CLOSE) {
+			set_bit(NBD_DISCONNECT_ON_CLOSE,
+				&config->runtime_flags);
+		}
 	}
 
 	if (info->attrs[NBD_ATTR_SOCKETS]) {
@@ -1721,6 +1746,16 @@ out:
 	return ret;
 }
 
+static void nbd_disconnect_and_put(struct nbd_device *nbd)
+{
+	mutex_lock(&nbd->config_lock);
+	nbd_disconnect(nbd);
+	mutex_unlock(&nbd->config_lock);
+	if (test_and_clear_bit(NBD_HAS_CONFIG_REF,
+			       &nbd->config->runtime_flags))
+		nbd_config_put(nbd);
+}
+
 static int nbd_genl_disconnect(struct sk_buff *skb, struct genl_info *info)
 {
 	struct nbd_device *nbd;
@@ -1753,12 +1788,7 @@ static int nbd_genl_disconnect(struct sk_buff *skb, struct genl_info *info)
 		nbd_put(nbd);
 		return 0;
 	}
-	mutex_lock(&nbd->config_lock);
-	nbd_disconnect(nbd);
-	mutex_unlock(&nbd->config_lock);
-	if (test_and_clear_bit(NBD_HAS_CONFIG_REF,
-			       &nbd->config->runtime_flags))
-		nbd_config_put(nbd);
+	nbd_disconnect_and_put(nbd);
 	nbd_config_put(nbd);
 	nbd_put(nbd);
 	return 0;
@@ -1769,7 +1799,7 @@ static int nbd_genl_reconfigure(struct sk_buff *skb, struct genl_info *info)
 	struct nbd_device *nbd = NULL;
 	struct nbd_config *config;
 	int index;
-	int ret = -EINVAL;
+	int ret = 0;
 	bool put_dev = false;
 
 	if (!netlink_capable(skb, CAP_SYS_ADMIN))
@@ -1809,6 +1839,7 @@ static int nbd_genl_reconfigure(struct sk_buff *skb, struct genl_info *info)
 	    !nbd->task_recv) {
 		dev_err(nbd_to_dev(nbd),
 			"not configured, cannot reconfigure\n");
+		ret = -EINVAL;
 		goto out;
 	}
 
@@ -1832,6 +1863,14 @@ static int nbd_genl_reconfigure(struct sk_buff *skb, struct genl_info *info)
 			if (test_and_clear_bit(NBD_DESTROY_ON_DISCONNECT,
 					       &config->runtime_flags))
 				refcount_inc(&nbd->refs);
+		}
+
+		if (flags & NBD_CFLAG_DISCONNECT_ON_CLOSE) {
+			set_bit(NBD_DISCONNECT_ON_CLOSE,
+					&config->runtime_flags);
+		} else {
+			clear_bit(NBD_DISCONNECT_ON_CLOSE,
+					&config->runtime_flags);
 		}
 	}
 

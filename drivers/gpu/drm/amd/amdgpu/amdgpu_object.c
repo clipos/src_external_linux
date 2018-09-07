@@ -689,8 +689,12 @@ int amdgpu_bo_pin_restricted(struct amdgpu_bo *bo, u32 domain,
 		return -EINVAL;
 
 	/* A shared bo cannot be migrated to VRAM */
-	if (bo->prime_shared_count && (domain == AMDGPU_GEM_DOMAIN_VRAM))
-		return -EINVAL;
+	if (bo->prime_shared_count) {
+		if (domain & AMDGPU_GEM_DOMAIN_GTT)
+			domain = AMDGPU_GEM_DOMAIN_GTT;
+		else
+			return -EINVAL;
+	}
 
 	if (bo->pin_count) {
 		uint32_t mem_type = bo->tbo.mem.mem_type;
@@ -749,8 +753,7 @@ int amdgpu_bo_pin_restricted(struct amdgpu_bo *bo, u32 domain,
 	domain = amdgpu_mem_type_to_domain(bo->tbo.mem.mem_type);
 	if (domain == AMDGPU_GEM_DOMAIN_VRAM) {
 		adev->vram_pin_size += amdgpu_bo_size(bo);
-		if (bo->flags & AMDGPU_GEM_CREATE_NO_CPU_ACCESS)
-			adev->invisible_pin_size += amdgpu_bo_size(bo);
+		adev->invisible_pin_size += amdgpu_vram_mgr_bo_invisible_size(bo);
 	} else if (domain == AMDGPU_GEM_DOMAIN_GTT) {
 		adev->gart_pin_size += amdgpu_bo_size(bo);
 	}
@@ -777,25 +780,22 @@ int amdgpu_bo_unpin(struct amdgpu_bo *bo)
 	bo->pin_count--;
 	if (bo->pin_count)
 		return 0;
+
+	if (bo->tbo.mem.mem_type == TTM_PL_VRAM) {
+		adev->vram_pin_size -= amdgpu_bo_size(bo);
+		adev->invisible_pin_size -= amdgpu_vram_mgr_bo_invisible_size(bo);
+	} else if (bo->tbo.mem.mem_type == TTM_PL_TT) {
+		adev->gart_pin_size -= amdgpu_bo_size(bo);
+	}
+
 	for (i = 0; i < bo->placement.num_placement; i++) {
 		bo->placements[i].lpfn = 0;
 		bo->placements[i].flags &= ~TTM_PL_FLAG_NO_EVICT;
 	}
 	r = ttm_bo_validate(&bo->tbo, &bo->placement, &ctx);
-	if (unlikely(r)) {
+	if (unlikely(r))
 		dev_err(adev->dev, "%p validate failed for unpin\n", bo);
-		goto error;
-	}
 
-	if (bo->tbo.mem.mem_type == TTM_PL_VRAM) {
-		adev->vram_pin_size -= amdgpu_bo_size(bo);
-		if (bo->flags & AMDGPU_GEM_CREATE_NO_CPU_ACCESS)
-			adev->invisible_pin_size -= amdgpu_bo_size(bo);
-	} else if (bo->tbo.mem.mem_type == TTM_PL_TT) {
-		adev->gart_pin_size -= amdgpu_bo_size(bo);
-	}
-
-error:
 	return r;
 }
 

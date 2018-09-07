@@ -8061,12 +8061,20 @@ static int rtl_alloc_irq(struct rtl8169_private *tp)
 {
 	unsigned int flags;
 
-	if (tp->mac_version <= RTL_GIGA_MAC_VER_06) {
+	switch (tp->mac_version) {
+	case RTL_GIGA_MAC_VER_01 ... RTL_GIGA_MAC_VER_06:
 		RTL_W8(tp, Cfg9346, Cfg9346_Unlock);
 		RTL_W8(tp, Config2, RTL_R8(tp, Config2) & ~MSIEnable);
 		RTL_W8(tp, Cfg9346, Cfg9346_Lock);
 		flags = PCI_IRQ_LEGACY;
-	} else {
+		break;
+	case RTL_GIGA_MAC_VER_39 ... RTL_GIGA_MAC_VER_40:
+		/* This version was reported to have issues with resume
+		 * from suspend when using MSI-X
+		 */
+		flags = PCI_IRQ_LEGACY | PCI_IRQ_MSI;
+		break;
+	default:
 		flags = PCI_IRQ_ALL_TYPES;
 	}
 
@@ -8272,8 +8280,7 @@ static int rtl_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		return rc;
 	}
 
-	/* override BIOS settings, use userspace tools to enable WOL */
-	__rtl8169_set_wol(tp, 0);
+	tp->saved_wolopts = __rtl8169_get_wol(tp);
 
 	if (rtl_tbi_enabled(tp)) {
 		tp->set_speed = rtl8169_set_speed_tbi;
@@ -8338,6 +8345,7 @@ static int rtl_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		NETIF_F_HW_VLAN_CTAG_RX;
 	dev->vlan_features = NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_TSO |
 		NETIF_F_HIGHDMA;
+	dev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
 
 	tp->cp_cmd |= RxChkSum | RxVlan;
 
