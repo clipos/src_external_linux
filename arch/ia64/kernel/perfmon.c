@@ -5706,13 +5706,6 @@ const struct seq_operations pfm_seq_ops = {
  	.show =		pfm_proc_show
 };
 
-static int
-pfm_proc_open(struct inode *inode, struct file *file)
-{
-	return seq_open(file, &pfm_seq_ops);
-}
-
-
 /*
  * we come here as soon as local_cpu_data->pfm_syst_wide is set. this happens
  * during pfm_enable() hence before pfm_start(). We cannot assume monitoring
@@ -6535,13 +6528,6 @@ found:
 	return 0;
 }
 
-static const struct file_operations pfm_proc_fops = {
-	.open		= pfm_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= seq_release,
-};
-
 int __init
 pfm_init(void)
 {
@@ -6613,7 +6599,7 @@ pfm_init(void)
 	/*
 	 * create /proc/perfmon (mostly for debugging purposes)
 	 */
-	perfmon_dir = proc_create("perfmon", S_IRUGO, NULL, &pfm_proc_fops);
+	perfmon_dir = proc_create_seq("perfmon", S_IRUGO, NULL, &pfm_seq_ops);
 	if (perfmon_dir == NULL) {
 		printk(KERN_ERR "perfmon: cannot create /proc entry, perfmon disabled\n");
 		pmu_conf = NULL;

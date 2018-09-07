@@ -208,7 +208,9 @@ enum vmcs_field {
 	EPTP_LIST_ADDRESS               = 0x00002024,
 	EPTP_LIST_ADDRESS_HIGH          = 0x00002025,
 	VMREAD_BITMAP                   = 0x00002026,
+	VMREAD_BITMAP_HIGH              = 0x00002027,
 	VMWRITE_BITMAP                  = 0x00002028,
+	VMWRITE_BITMAP_HIGH             = 0x00002029,
 	XSS_EXIT_BITMAP                 = 0x0000202C,
 	XSS_EXIT_BITMAP_HIGH            = 0x0000202D,
 	TSC_MULTIPLIER                  = 0x00002032,
@@ -573,16 +575,5 @@ enum vm_instruction_error_number {
 	VMXERR_ENTRY_EVENTS_BLOCKED_BY_MOV_SS = 26,
 	VMXERR_INVALID_OPERAND_TO_INVEPT_INVVPID = 28,
 };
-
-enum vmx_l1d_flush_state {
-	VMENTER_L1D_FLUSH_AUTO,
-	VMENTER_L1D_FLUSH_NEVER,
-	VMENTER_L1D_FLUSH_COND,
-	VMENTER_L1D_FLUSH_ALWAYS,
-	VMENTER_L1D_FLUSH_EPT_DISABLED,
-	VMENTER_L1D_FLUSH_NOT_REQUIRED,
-};
-
-extern enum vmx_l1d_flush_state l1tf_vmx_mitigation;
 
 #endif

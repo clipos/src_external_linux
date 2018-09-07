@@ -9,6 +9,8 @@
 
 #include <linux/nospec.h>
 
+#include <linux/kcov.h>
+
 #include <asm/switch_to.h>
 #include <asm/tlb.h>
 
@@ -1190,6 +1192,7 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 		if (p->sched_class->migrate_task_rq)
 			p->sched_class->migrate_task_rq(p);
 		p->se.nr_migrations++;
+		rseq_migrate(p);
 		perf_event_task_migrate(p);
 	}
 
@@ -2193,27 +2196,7 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 	INIT_HLIST_HEAD(&p->preempt_notifiers);
 #endif
 
-#ifdef CONFIG_NUMA_BALANCING
-	if (p->mm && atomic_read(&p->mm->mm_users) == 1) {
-		p->mm->numa_next_scan = jiffies + msecs_to_jiffies(sysctl_numa_balancing_scan_delay);
-		p->mm->numa_scan_seq = 0;
-	}
-
-	if (clone_flags & CLONE_VM)
-		p->numa_preferred_nid = current->numa_preferred_nid;
-	else
-		p->numa_preferred_nid = -1;
-
-	p->node_stamp = 0ULL;
-	p->numa_scan_seq = p->mm ? p->mm->numa_scan_seq : 0;
-	p->numa_scan_period = sysctl_numa_balancing_scan_delay;
-	p->numa_work.next = &p->numa_work;
-	p->numa_faults = NULL;
-	p->last_task_numa_placement = 0;
-	p->last_sum_exec_runtime = 0;
-
-	p->numa_group = NULL;
-#endif /* CONFIG_NUMA_BALANCING */
+	init_numa_balancing(clone_flags, p);
 }
 
 DEFINE_STATIC_KEY_FALSE(sched_numa_balancing);
@@ -2651,8 +2634,10 @@ static inline void
 prepare_task_switch(struct rq *rq, struct task_struct *prev,
 		    struct task_struct *next)
 {
+	kcov_prepare_switch(prev);
 	sched_info_switch(rq, prev, next);
 	perf_event_task_sched_out(prev, next);
+	rseq_preempt(prev);
 	fire_sched_out_preempt_notifiers(prev, next);
 	prepare_task(next);
 	prepare_arch_switch(next);
@@ -2719,6 +2704,7 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 	finish_task(prev);
 	finish_lock_switch(rq);
 	finish_arch_post_lock_switch();
+	kcov_finish_switch(current);
 
 	fire_sched_in_preempt_notifiers(current);
 	/*
@@ -4047,6 +4033,23 @@ int idle_cpu(int cpu)
 }
 
 /**
+ * available_idle_cpu - is a given CPU idle for enqueuing work.
+ * @cpu: the CPU in question.
+ *
+ * Return: 1 if the CPU is currently idle. 0 otherwise.
+ */
+int available_idle_cpu(int cpu)
+{
+	if (!idle_cpu(cpu))
+		return 0;
+
+	if (vcpu_is_preempted(cpu))
+		return 0;
+
+	return 1;
+}
+
+/**
  * idle_task - return the idle task for a given CPU.
  * @cpu: the processor in question.
  *
@@ -5022,20 +5025,6 @@ int __cond_resched_lock(spinlock_t *lock)
 }
 EXPORT_SYMBOL(__cond_resched_lock);
 
-int __sched __cond_resched_softirq(void)
-{
-	BUG_ON(!in_softirq());
-
-	if (should_resched(SOFTIRQ_DISABLE_OFFSET)) {
-		local_bh_enable();
-		preempt_schedule_common();
-		local_bh_disable();
-		return 1;
-	}
-	return 0;
-}
-EXPORT_SYMBOL(__cond_resched_softirq);
-
 /**
  * yield - yield the current processor to other threads.
  *
@@ -5785,18 +5774,6 @@ int sched_cpu_activate(unsigned int cpu)
 	struct rq *rq = cpu_rq(cpu);
 	struct rq_flags rf;
 
-#ifdef CONFIG_SCHED_SMT
-	/*
-	 * The sched_smt_present static key needs to be evaluated on every
-	 * hotplug event because at boot time SMT might be disabled when
-	 * the number of booted CPUs is limited.
-	 *
-	 * If then later a sibling gets hotplugged, then the key would stay
-	 * off and SMT scheduling would never be functional.
-	 */
-	if (cpumask_weight(cpu_smt_mask(cpu)) > 1)
-		static_branch_enable_cpuslocked(&sched_smt_present);
-#endif
 	set_cpu_active(cpu, true);
 
 	if (sched_smp_initialized) {
@@ -5894,6 +5871,22 @@ int sched_cpu_dying(unsigned int cpu)
 }
 #endif
 
+#ifdef CONFIG_SCHED_SMT
+DEFINE_STATIC_KEY_FALSE(sched_smt_present);
+
+static void sched_init_smt(void)
+{
+	/*
+	 * We've enumerated all CPUs and will assume that if any CPU
+	 * has SMT siblings, CPU0 will too.
+	 */
+	if (cpumask_weight(cpu_smt_mask(0)) > 1)
+		static_branch_enable(&sched_smt_present);
+}
+#else
+static inline void sched_init_smt(void) { }
+#endif
+
 void __init sched_init_smp(void)
 {
 	sched_init_numa();
@@ -5914,6 +5907,8 @@ void __init sched_init_smp(void)
 
 	init_sched_rt_class();
 	init_sched_dl_class();
+
+	sched_init_smt();
 
 	sched_smp_initialized = true;
 }

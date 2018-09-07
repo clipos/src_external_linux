@@ -1106,41 +1106,6 @@ static int ravb_phy_start(struct net_device *ndev)
 	return 0;
 }
 
-static int ravb_get_link_ksettings(struct net_device *ndev,
-				   struct ethtool_link_ksettings *cmd)
-{
-	struct ravb_private *priv = netdev_priv(ndev);
-	unsigned long flags;
-
-	if (!ndev->phydev)
-		return -ENODEV;
-
-	spin_lock_irqsave(&priv->lock, flags);
-	phy_ethtool_ksettings_get(ndev->phydev, cmd);
-	spin_unlock_irqrestore(&priv->lock, flags);
-
-	return 0;
-}
-
-static int ravb_set_link_ksettings(struct net_device *ndev,
-				   const struct ethtool_link_ksettings *cmd)
-{
-	if (!ndev->phydev)
-		return -ENODEV;
-
-	return phy_ethtool_ksettings_set(ndev->phydev, cmd);
-}
-
-static int ravb_nway_reset(struct net_device *ndev)
-{
-	int error = -ENODEV;
-
-	if (ndev->phydev)
-		error = phy_start_aneg(ndev->phydev);
-
-	return error;
-}
-
 static u32 ravb_get_msglevel(struct net_device *ndev)
 {
 	struct ravb_private *priv = netdev_priv(ndev);
@@ -1353,7 +1318,7 @@ static int ravb_set_wol(struct net_device *ndev, struct ethtool_wolinfo *wol)
 }
 
 static const struct ethtool_ops ravb_ethtool_ops = {
-	.nway_reset		= ravb_nway_reset,
+	.nway_reset		= phy_ethtool_nway_reset,
 	.get_msglevel		= ravb_get_msglevel,
 	.set_msglevel		= ravb_set_msglevel,
 	.get_link		= ethtool_op_get_link,
@@ -1363,8 +1328,8 @@ static const struct ethtool_ops ravb_ethtool_ops = {
 	.get_ringparam		= ravb_get_ringparam,
 	.set_ringparam		= ravb_set_ringparam,
 	.get_ts_info		= ravb_get_ts_info,
-	.get_link_ksettings	= ravb_get_link_ksettings,
-	.set_link_ksettings	= ravb_set_link_ksettings,
+	.get_link_ksettings	= phy_ethtool_get_link_ksettings,
+	.set_link_ksettings	= phy_ethtool_set_link_ksettings,
 	.get_wol		= ravb_get_wol,
 	.set_wol		= ravb_set_wol,
 };

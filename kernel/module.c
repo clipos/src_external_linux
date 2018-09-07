@@ -275,9 +275,7 @@ static void module_assert_mutex_or_preempt(void)
 }
 
 static bool sig_enforce = IS_ENABLED(CONFIG_MODULE_SIG_FORCE);
-#ifndef CONFIG_MODULE_SIG_FORCE
 module_param(sig_enforce, bool_enable_only, 0644);
-#endif /* !CONFIG_MODULE_SIG_FORCE */
 
 /*
  * Export sig_enforce kernel cmdline parameter to allow other subsystems rely
@@ -1605,8 +1603,7 @@ static void add_notes_attrs(struct module *mod, const struct load_info *info)
 	if (notes == 0)
 		return;
 
-	notes_attrs = kzalloc(sizeof(*notes_attrs)
-			      + notes * sizeof(notes_attrs->attrs[0]),
+	notes_attrs = kzalloc(struct_size(notes_attrs, attrs, notes),
 			      GFP_KERNEL);
 	if (notes_attrs == NULL)
 		return;
@@ -2801,7 +2798,7 @@ static int module_sig_check(struct load_info *info, int flags,
 	case -ENOKEY:
 		reason = "Loading of module with unavailable key";
 	decide:
-		if (sig_enforce) {
+		if (is_module_sig_enforced()) {
 			pr_notice("%s is rejected\n", reason);
 			return -EKEYREJECTED;
 		} else if (can_do_ima_check && is_ima_appraise_enabled())

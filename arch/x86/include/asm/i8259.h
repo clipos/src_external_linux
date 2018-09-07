@@ -3,7 +3,6 @@
 #define _ASM_X86_I8259_H
 
 #include <linux/delay.h>
-#include <asm/io.h>
 
 extern unsigned int cached_irq_mask;
 

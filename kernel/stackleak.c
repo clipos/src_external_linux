@@ -7,9 +7,7 @@
  * Author: Alexander Popov <alex.popov@linux.com>
  *
  * STACKLEAK reduces the information which kernel stack leak bugs can
- * reveal and blocks some uninitialized stack variable attacks. Moreover,
- * STACKLEAK blocks stack depth overflow caused by alloca(), aka Stack Clash
- * attack.
+ * reveal and blocks some uninitialized stack variable attacks.
  */
 
 #include <linux/stackleak.h>
@@ -53,12 +51,16 @@ asmlinkage void stackleak_erase(void)
 {
 	/* It would be nice not to have 'kstack_ptr' and 'boundary' on stack */
 	unsigned long kstack_ptr = current->lowest_stack;
-	unsigned long boundary = kstack_ptr & ~(THREAD_SIZE - 1);
+	unsigned long boundary = (unsigned long)end_of_stack(current);
 	unsigned int poison_count = 0;
 	const unsigned int depth = STACKLEAK_SEARCH_DEPTH / sizeof(unsigned long);
 
 	if (skip_erasing())
 		return;
+
+	/* Check that 'lowest_stack' value is sane */
+	if (unlikely(kstack_ptr - boundary >= THREAD_SIZE))
+		kstack_ptr = boundary;
 
 	/* Search for the poison value in the kernel stack */
 	while (kstack_ptr > boundary && poison_count <= depth) {
@@ -90,8 +92,6 @@ asmlinkage void stackleak_erase(void)
 		boundary = current_stack_pointer;
 	else
 		boundary = current_top_of_stack();
-
-	BUG_ON(boundary - kstack_ptr >= THREAD_SIZE);
 
 	while (kstack_ptr < boundary) {
 		*(unsigned long *)kstack_ptr = STACKLEAK_POISON;

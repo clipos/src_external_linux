@@ -65,7 +65,7 @@ extern pmdval_t early_pmd_flags;
 
 #ifndef __PAGETABLE_P4D_FOLDED
 #define set_pgd(pgdp, pgd)		native_set_pgd(pgdp, pgd)
-#define pgd_clear(pgd)			(pgtable_l5_enabled ? native_pgd_clear(pgd) : 0)
+#define pgd_clear(pgd)			(pgtable_l5_enabled() ? native_pgd_clear(pgd) : 0)
 #endif
 
 #ifndef set_p4d
@@ -185,29 +185,19 @@ static inline int pte_special(pte_t pte)
 	return pte_flags(pte) & _PAGE_SPECIAL;
 }
 
-/* Entries that were set to PROT_NONE are inverted */
-
-static inline u64 protnone_mask(u64 val);
-
 static inline unsigned long pte_pfn(pte_t pte)
 {
-	phys_addr_t pfn = pte_val(pte);
-	pfn ^= protnone_mask(pfn);
-	return (pfn & PTE_PFN_MASK) >> PAGE_SHIFT;
+	return (pte_val(pte) & PTE_PFN_MASK) >> PAGE_SHIFT;
 }
 
 static inline unsigned long pmd_pfn(pmd_t pmd)
 {
-	phys_addr_t pfn = pmd_val(pmd);
-	pfn ^= protnone_mask(pfn);
-	return (pfn & pmd_pfn_mask(pmd)) >> PAGE_SHIFT;
+	return (pmd_val(pmd) & pmd_pfn_mask(pmd)) >> PAGE_SHIFT;
 }
 
 static inline unsigned long pud_pfn(pud_t pud)
 {
-	phys_addr_t pfn = pud_val(pud);
-	pfn ^= protnone_mask(pfn);
-	return (pfn & pud_pfn_mask(pud)) >> PAGE_SHIFT;
+	return (pud_val(pud) & pud_pfn_mask(pud)) >> PAGE_SHIFT;
 }
 
 static inline unsigned long p4d_pfn(p4d_t p4d)
@@ -410,6 +400,11 @@ static inline pmd_t pmd_mkwrite(pmd_t pmd)
 	return pmd_set_flags(pmd, _PAGE_RW);
 }
 
+static inline pmd_t pmd_mknotpresent(pmd_t pmd)
+{
+	return pmd_clear_flags(pmd, _PAGE_PRESENT | _PAGE_PROTNONE);
+}
+
 static inline pud_t pud_set_flags(pud_t pud, pudval_t set)
 {
 	pudval_t v = native_pud_val(pud);
@@ -462,6 +457,11 @@ static inline pud_t pud_mkyoung(pud_t pud)
 static inline pud_t pud_mkwrite(pud_t pud)
 {
 	return pud_set_flags(pud, _PAGE_RW);
+}
+
+static inline pud_t pud_mknotpresent(pud_t pud)
+{
+	return pud_clear_flags(pud, _PAGE_PRESENT | _PAGE_PROTNONE);
 }
 
 #ifdef CONFIG_HAVE_ARCH_SOFT_DIRTY
@@ -545,45 +545,25 @@ static inline pgprotval_t check_pgprot(pgprot_t pgprot)
 
 static inline pte_t pfn_pte(unsigned long page_nr, pgprot_t pgprot)
 {
-	phys_addr_t pfn = (phys_addr_t)page_nr << PAGE_SHIFT;
-	pfn ^= protnone_mask(pgprot_val(pgprot));
-	pfn &= PTE_PFN_MASK;
-	return __pte(pfn | check_pgprot(pgprot));
+	return __pte(((phys_addr_t)page_nr << PAGE_SHIFT) |
+		     check_pgprot(pgprot));
 }
 
 static inline pmd_t pfn_pmd(unsigned long page_nr, pgprot_t pgprot)
 {
-	phys_addr_t pfn = (phys_addr_t)page_nr << PAGE_SHIFT;
-	pfn ^= protnone_mask(pgprot_val(pgprot));
-	pfn &= PHYSICAL_PMD_PAGE_MASK;
-	return __pmd(pfn | check_pgprot(pgprot));
+	return __pmd(((phys_addr_t)page_nr << PAGE_SHIFT) |
+		     check_pgprot(pgprot));
 }
 
 static inline pud_t pfn_pud(unsigned long page_nr, pgprot_t pgprot)
 {
-	phys_addr_t pfn = (phys_addr_t)page_nr << PAGE_SHIFT;
-	pfn ^= protnone_mask(pgprot_val(pgprot));
-	pfn &= PHYSICAL_PUD_PAGE_MASK;
-	return __pud(pfn | check_pgprot(pgprot));
+	return __pud(((phys_addr_t)page_nr << PAGE_SHIFT) |
+		     check_pgprot(pgprot));
 }
-
-static inline pmd_t pmd_mknotpresent(pmd_t pmd)
-{
-	return pfn_pmd(pmd_pfn(pmd),
-		      __pgprot(pmd_flags(pmd) & ~(_PAGE_PRESENT|_PAGE_PROTNONE)));
-}
-
-static inline pud_t pud_mknotpresent(pud_t pud)
-{
-	return pfn_pud(pud_pfn(pud),
-	      __pgprot(pud_flags(pud) & ~(_PAGE_PRESENT|_PAGE_PROTNONE)));
-}
-
-static inline u64 flip_protnone_guard(u64 oldval, u64 val, u64 mask);
 
 static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
 {
-	pteval_t val = pte_val(pte), oldval = val;
+	pteval_t val = pte_val(pte);
 
 	/*
 	 * Chop off the NX bit (if present), and add the NX portion of
@@ -591,17 +571,17 @@ static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
 	 */
 	val &= _PAGE_CHG_MASK;
 	val |= check_pgprot(newprot) & ~_PAGE_CHG_MASK;
-	val = flip_protnone_guard(oldval, val, PTE_PFN_MASK);
+
 	return __pte(val);
 }
 
 static inline pmd_t pmd_modify(pmd_t pmd, pgprot_t newprot)
 {
-	pmdval_t val = pmd_val(pmd), oldval = val;
+	pmdval_t val = pmd_val(pmd);
 
 	val &= _HPAGE_CHG_MASK;
 	val |= check_pgprot(newprot) & ~_HPAGE_CHG_MASK;
-	val = flip_protnone_guard(oldval, val, PHYSICAL_PMD_PAGE_MASK);
+
 	return __pmd(val);
 }
 
@@ -901,7 +881,7 @@ static inline unsigned long p4d_index(unsigned long address)
 #if CONFIG_PGTABLE_LEVELS > 4
 static inline int pgd_present(pgd_t pgd)
 {
-	if (!pgtable_l5_enabled)
+	if (!pgtable_l5_enabled())
 		return 1;
 	return pgd_flags(pgd) & _PAGE_PRESENT;
 }
@@ -920,7 +900,7 @@ static inline unsigned long pgd_page_vaddr(pgd_t pgd)
 /* to find an entry in a page-table-directory. */
 static inline p4d_t *p4d_offset(pgd_t *pgd, unsigned long address)
 {
-	if (!pgtable_l5_enabled)
+	if (!pgtable_l5_enabled())
 		return (p4d_t *)pgd;
 	return (p4d_t *)pgd_page_vaddr(*pgd) + p4d_index(address);
 }
@@ -929,7 +909,7 @@ static inline int pgd_bad(pgd_t pgd)
 {
 	unsigned long ignore_flags = _PAGE_USER;
 
-	if (!pgtable_l5_enabled)
+	if (!pgtable_l5_enabled())
 		return 0;
 
 	if (IS_ENABLED(CONFIG_PAGE_TABLE_ISOLATION))
@@ -940,7 +920,7 @@ static inline int pgd_bad(pgd_t pgd)
 
 static inline int pgd_none(pgd_t pgd)
 {
-	if (!pgtable_l5_enabled)
+	if (!pgtable_l5_enabled())
 		return 0;
 	/*
 	 * There is no need to do a workaround for the KNL stray
@@ -1338,14 +1318,6 @@ static inline bool pmd_access_permitted(pmd_t pmd, bool write)
 static inline bool pud_access_permitted(pud_t pud, bool write)
 {
 	return __pte_access_permitted(pud_val(pud), write);
-}
-
-#define __HAVE_ARCH_PFN_MODIFY_ALLOWED 1
-extern bool pfn_modify_allowed(unsigned long pfn, pgprot_t prot);
-
-static inline bool arch_has_pfn_modify_check(void)
-{
-	return boot_cpu_has_bug(X86_BUG_L1TF);
 }
 
 #include <asm-generic/pgtable.h>

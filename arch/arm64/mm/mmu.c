@@ -977,12 +977,12 @@ int pmd_clear_huge(pmd_t *pmdp)
 	return 1;
 }
 
-int pud_free_pmd_page(pud_t *pud, unsigned long addr)
+int pud_free_pmd_page(pud_t *pud)
 {
 	return pud_none(*pud);
 }
 
-int pmd_free_pte_page(pmd_t *pmd, unsigned long addr)
+int pmd_free_pte_page(pmd_t *pmd)
 {
 	return pmd_none(*pmd);
 }

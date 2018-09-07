@@ -20,7 +20,7 @@
 #include <string.h>
 #include <time.h>
 #include <sys/resource.h>
-#include "libbpf.h"
+#include <bpf/bpf.h>
 #include "bpf_load.h"
 
 #define MAX_CNT 1000000
