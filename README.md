@@ -9,14 +9,15 @@ Overview
 The CLIP OS kernel is based on Linux. It also integrates:
 - existing hardening patches that are not upstream yet and that we consider
   relevant to our security model;
-- developments made for previous CLIP versions that we have not upstreamed yet,
-  or that cannot be upstreamed;
-- entirely new functionalities that have not been upstreamed yet.
+- developments made for previous CLIP OS versions that we have not upstreamed
+  yet (or that cannot be);
+- entirely new functionalities that have not been upstreamed yet (or that
+  cannot be).
 
 Documentation
 -------------
 
-The documentation is available in the `products/clip/doc` folder.
+See the [CLIP OS documentation](https://docs.clip-os.org).
 
 Git Workflow
 ------------
@@ -85,12 +86,3 @@ more information on that.
 The kernel is then built as part of the **efiboot** recipe (see the toolkit
 documentation for more information) and can be tested using the **qemu**
 recipe to fire a new CLIP OS virtual machine.
-
-How to Contribute
------------------
-
-You can contribute to this project in various ways, including by:
-- doing code reviews on [Gerrit](FIXME);
-- picking [GitHub](FIXME) issues and working on them;
-- testing and giving feedback, suggesting new ideas and, more generally,
-  joining our discussions on [Gitter](FIXME), [Discourse](FIXME), etc.
