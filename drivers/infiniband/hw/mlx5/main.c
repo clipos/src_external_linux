@@ -2699,7 +2699,7 @@ static int parse_flow_attr(struct mlx5_core_dev *mdev, u32 *match_c,
 			 IPPROTO_GRE);
 
 		MLX5_SET(fte_match_set_misc, misc_params_c, gre_protocol,
-			 0xffff);
+			 ntohs(ib_spec->gre.mask.protocol));
 		MLX5_SET(fte_match_set_misc, misc_params_v, gre_protocol,
 			 ntohs(ib_spec->gre.val.protocol));
 
@@ -4694,7 +4694,7 @@ static void mlx5_ib_dealloc_counters(struct mlx5_ib_dev *dev)
 	int i;
 
 	for (i = 0; i < dev->num_ports; i++) {
-		if (dev->port[i].cnts.set_id)
+		if (dev->port[i].cnts.set_id_valid)
 			mlx5_core_dealloc_q_counter(dev->mdev,
 						    dev->port[i].cnts.set_id);
 		kfree(dev->port[i].cnts.names);

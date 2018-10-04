@@ -17,6 +17,7 @@
 #include <linux/tracepoint.h>
 #include <linux/cpumask.h>
 #include <linux/irq_work.h>
+#include <linux/irq.h>
 
 #include <linux/kvm.h>
 #include <linux/kvm_para.h>
@@ -713,6 +714,9 @@ struct kvm_vcpu_arch {
 
 	/* be preempted when it's in kernel-mode(cpl=0) */
 	bool preempted_in_kernel;
+
+	/* Flush the L1 Data cache for L1TF mitigation on VMENTER */
+	bool l1tf_flush_l1d;
 };
 
 struct kvm_lpage_info {
@@ -881,6 +885,7 @@ struct kvm_vcpu_stat {
 	u64 signal_exits;
 	u64 irq_window_exits;
 	u64 nmi_window_exits;
+	u64 l1d_flush;
 	u64 halt_exits;
 	u64 halt_successful_poll;
 	u64 halt_attempted_poll;
@@ -1193,18 +1198,22 @@ enum emulation_result {
 #define EMULTYPE_NO_DECODE	    (1 << 0)
 #define EMULTYPE_TRAP_UD	    (1 << 1)
 #define EMULTYPE_SKIP		    (1 << 2)
-#define EMULTYPE_RETRY		    (1 << 3)
-#define EMULTYPE_NO_REEXECUTE	    (1 << 4)
-#define EMULTYPE_NO_UD_ON_FAIL	    (1 << 5)
-#define EMULTYPE_VMWARE		    (1 << 6)
+#define EMULTYPE_ALLOW_RETRY	    (1 << 3)
+#define EMULTYPE_NO_UD_ON_FAIL	    (1 << 4)
+#define EMULTYPE_VMWARE		    (1 << 5)
 int x86_emulate_instruction(struct kvm_vcpu *vcpu, unsigned long cr2,
 			    int emulation_type, void *insn, int insn_len);
 
 static inline int emulate_instruction(struct kvm_vcpu *vcpu,
 			int emulation_type)
 {
-	return x86_emulate_instruction(vcpu, 0,
-			emulation_type | EMULTYPE_NO_REEXECUTE, NULL, 0);
+	return x86_emulate_instruction(vcpu, 0, emulation_type, NULL, 0);
+}
+
+static inline int kvm_emulate_instruction_from_buffer(struct kvm_vcpu *vcpu,
+						      void *insn, int insn_len)
+{
+	return x86_emulate_instruction(vcpu, 0, 0, insn, insn_len);
 }
 
 void kvm_enable_efer_bits(u64);
@@ -1413,6 +1422,7 @@ int kvm_cpu_get_interrupt(struct kvm_vcpu *v);
 void kvm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event);
 void kvm_vcpu_reload_apic_access_page(struct kvm_vcpu *vcpu);
 
+u64 kvm_get_arch_capabilities(void);
 void kvm_define_shared_msr(unsigned index, u32 msr);
 int kvm_set_shared_msr(unsigned index, u64 val, u64 mask);
 

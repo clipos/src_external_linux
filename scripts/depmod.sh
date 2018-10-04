@@ -10,7 +10,13 @@ fi
 DEPMOD=$1
 KERNELRELEASE=$2
 
-if ! test -r System.map -a -x "$DEPMOD"; then
+if ! test -r System.map ; then
+	exit 0
+fi
+
+if [ -z $(command -v $DEPMOD) ]; then
+	echo "Warning: 'make modules_install' requires $DEPMOD. Please install it." >&2
+	echo "This is probably in the kmod package." >&2
 	exit 0
 fi
 

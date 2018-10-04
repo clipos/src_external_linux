@@ -45,6 +45,7 @@
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
 #include <asm/desc.h>
+#include <asm/sections.h>
 
 #undef pr_fmt
 #define pr_fmt(fmt)     "Kernel/User page tables isolation: " fmt
@@ -176,7 +177,7 @@ static p4d_t *pti_user_pagetable_walk_p4d(unsigned long address)
 
 	if (pgd_none(*pgd)) {
 		unsigned long new_p4d_page = __get_free_page(gfp);
-		if (!new_p4d_page)
+		if (WARN_ON_ONCE(!new_p4d_page))
 			return NULL;
 
 		set_pgd(pgd, __pgd(_KERNPG_TABLE | __pa(new_p4d_page)));
@@ -195,13 +196,17 @@ static p4d_t *pti_user_pagetable_walk_p4d(unsigned long address)
 static pmd_t *pti_user_pagetable_walk_pmd(unsigned long address)
 {
 	gfp_t gfp = (GFP_KERNEL | __GFP_NOTRACK | __GFP_ZERO);
-	p4d_t *p4d = pti_user_pagetable_walk_p4d(address);
+	p4d_t *p4d;
 	pud_t *pud;
+
+	p4d = pti_user_pagetable_walk_p4d(address);
+	if (!p4d)
+		return NULL;
 
 	BUILD_BUG_ON(p4d_large(*p4d) != 0);
 	if (p4d_none(*p4d)) {
 		unsigned long new_pud_page = __get_free_page(gfp);
-		if (!new_pud_page)
+		if (WARN_ON_ONCE(!new_pud_page))
 			return NULL;
 
 		set_p4d(p4d, __p4d(_KERNPG_TABLE | __pa(new_pud_page)));
@@ -215,7 +220,7 @@ static pmd_t *pti_user_pagetable_walk_pmd(unsigned long address)
 	}
 	if (pud_none(*pud)) {
 		unsigned long new_pmd_page = __get_free_page(gfp);
-		if (!new_pmd_page)
+		if (WARN_ON_ONCE(!new_pmd_page))
 			return NULL;
 
 		set_pud(pud, __pud(_KERNPG_TABLE | __pa(new_pmd_page)));
@@ -234,11 +239,15 @@ static pmd_t *pti_user_pagetable_walk_pmd(unsigned long address)
  *
  * Returns a pointer to a PTE on success, or NULL on failure.
  */
-static __init pte_t *pti_user_pagetable_walk_pte(unsigned long address)
+static pte_t *pti_user_pagetable_walk_pte(unsigned long address)
 {
 	gfp_t gfp = (GFP_KERNEL | __GFP_NOTRACK | __GFP_ZERO);
-	pmd_t *pmd = pti_user_pagetable_walk_pmd(address);
+	pmd_t *pmd;
 	pte_t *pte;
+
+	pmd = pti_user_pagetable_walk_pmd(address);
+	if (!pmd)
+		return NULL;
 
 	/* We can't do anything sensible if we hit a large mapping. */
 	if (pmd_large(*pmd)) {
@@ -297,6 +306,10 @@ pti_clone_pmds(unsigned long start, unsigned long end, pmdval_t clear)
 		p4d_t *p4d;
 		pud_t *pud;
 
+		/* Overflow check */
+		if (addr < start)
+			break;
+
 		pgd = pgd_offset_k(addr);
 		if (WARN_ON(pgd_none(*pgd)))
 			return;
@@ -354,6 +367,9 @@ static void __init pti_clone_p4d(unsigned long addr)
 	pgd_t *kernel_pgd;
 
 	user_p4d = pti_user_pagetable_walk_p4d(addr);
+	if (!user_p4d)
+		return;
+
 	kernel_pgd = pgd_offset_k(addr);
 	kernel_p4d = p4d_offset(kernel_pgd, addr);
 	*user_p4d = *kernel_p4d;
@@ -435,6 +451,13 @@ static inline bool pti_kernel_image_global_ok(void)
 }
 
 /*
+ * This is the only user for these and it is not arch-generic
+ * like the other set_memory.h functions.  Just extern them.
+ */
+extern int set_memory_nonglobal(unsigned long addr, int numpages);
+extern int set_memory_global(unsigned long addr, int numpages);
+
+/*
  * For some configurations, map all of kernel text into the user page
  * tables.  This reduces TLB misses, especially on non-PCID systems.
  */
@@ -446,7 +469,8 @@ void pti_clone_kernel_text(void)
 	 * clone the areas past rodata, they might contain secrets.
 	 */
 	unsigned long start = PFN_ALIGN(_text);
-	unsigned long end = (unsigned long)__end_rodata_hpage_align;
+	unsigned long end_clone  = (unsigned long)__end_rodata_hpage_align;
+	unsigned long end_global = PFN_ALIGN((unsigned long)__stop___ex_table);
 
 	if (!pti_kernel_image_global_ok())
 		return;
@@ -458,14 +482,18 @@ void pti_clone_kernel_text(void)
 	 * pti_set_kernel_image_nonglobal() did to clear the
 	 * global bit.
 	 */
-	pti_clone_pmds(start, end, _PAGE_RW);
+	pti_clone_pmds(start, end_clone, _PAGE_RW);
+
+	/*
+	 * pti_clone_pmds() will set the global bit in any PMDs
+	 * that it clones, but we also need to get any PTEs in
+	 * the last level for areas that are not huge-page-aligned.
+	 */
+
+	/* Set the global bit for normal non-__init kernel text: */
+	set_memory_global(start, (end_global - start) >> PAGE_SHIFT);
 }
 
-/*
- * This is the only user for it and it is not arch-generic like
- * the other set_memory.h functions.  Just extern it.
- */
-extern int set_memory_nonglobal(unsigned long addr, int numpages);
 void pti_set_kernel_image_nonglobal(void)
 {
 	/*
@@ -477,9 +505,11 @@ void pti_set_kernel_image_nonglobal(void)
 	unsigned long start = PFN_ALIGN(_text);
 	unsigned long end = ALIGN((unsigned long)_end, PMD_PAGE_SIZE);
 
-	if (pti_kernel_image_global_ok())
-		return;
-
+	/*
+	 * This clears _PAGE_GLOBAL from the entire kernel image.
+	 * pti_clone_kernel_text() map put _PAGE_GLOBAL back for
+	 * areas that are mapped to userspace.
+	 */
 	set_memory_nonglobal(start, (end - start) >> PAGE_SHIFT);
 }
 
