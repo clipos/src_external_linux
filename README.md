@@ -80,9 +80,9 @@ The kernel is incorporated into CLIP OS thanks to the **clipos-kernel** ebuilds
 located in `src/portage/clipos/sys-kernel/clipos-kernel`. The **cros-workon**
 eclass from Chromium OS is used to handle fetching sources from a Git
 repository. Different kernel versions can be managed by the use of symbolic
-links; see the **clipos-portage** tool located in `src/platform/clipos-portage` for
-more information on that.
+links; see the **portage-derive** tool located in `src/platform/portage-derive`
+for more information on that.
 
-The kernel is then built as part of the **efiboot** recipe (see the toolkit
+The kernel is then built as part of the **core** recipe (see the toolkit
 documentation for more information) and can be tested using the **qemu**
 recipe to fire a new CLIP OS virtual machine.
