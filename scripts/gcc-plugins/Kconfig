@@ -143,6 +143,8 @@ config GCC_PLUGIN_STACKLEAK
 	bool "Erase the kernel stack before returning from syscalls"
 	depends on GCC_PLUGINS
 	depends on HAVE_ARCH_STACKLEAK
+	imply VMAP_STACK
+	imply SCHED_STACK_END_CHECK
 	help
 	  This option makes the kernel erase the kernel stack before
 	  returning from system calls. That reduces the information which
