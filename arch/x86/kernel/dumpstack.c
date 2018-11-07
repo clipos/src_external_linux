@@ -426,12 +426,13 @@ void show_regs(struct pt_regs *regs)
 #ifdef CONFIG_GCC_PLUGIN_STACKLEAK
 void __used stackleak_check_alloca(unsigned long size)
 {
-	unsigned long sp = (unsigned long)&sp;
+	unsigned long sp = current_stack_pointer;
 	struct stack_info stack_info = {0};
 	unsigned long visit_mask = 0;
 	unsigned long stack_left;
 
-	BUG_ON(get_stack_info(&sp, current, &stack_info, &visit_mask));
+	BUG_ON(get_stack_info((unsigned long *)sp, current, &stack_info,
+			      &visit_mask));
 
 	stack_left = sp - (unsigned long)stack_info.begin;
 
