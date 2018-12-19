@@ -394,12 +394,16 @@ static const char * const hwmon_power_attr_templates[] = {
 	[hwmon_power_cap_hyst] = "power%d_cap_hyst",
 	[hwmon_power_cap_max] = "power%d_cap_max",
 	[hwmon_power_cap_min] = "power%d_cap_min",
+	[hwmon_power_min] = "power%d_min",
 	[hwmon_power_max] = "power%d_max",
+	[hwmon_power_lcrit] = "power%d_lcrit",
 	[hwmon_power_crit] = "power%d_crit",
 	[hwmon_power_label] = "power%d_label",
 	[hwmon_power_alarm] = "power%d_alarm",
 	[hwmon_power_cap_alarm] = "power%d_cap_alarm",
+	[hwmon_power_min_alarm] = "power%d_min_alarm",
 	[hwmon_power_max_alarm] = "power%d_max_alarm",
+	[hwmon_power_lcrit_alarm] = "power%d_lcrit_alarm",
 	[hwmon_power_crit_alarm] = "power%d_crit_alarm",
 };
 
@@ -631,10 +635,8 @@ __hwmon_device_register(struct device *dev, const char *name, void *drvdata,
 				if (info[i]->config[j] & HWMON_T_INPUT) {
 					err = hwmon_thermal_add_sensor(dev,
 								hwdev, j);
-					if (err) {
-						device_unregister(hdev);
-						goto ida_remove;
-					}
+					if (err)
+						goto free_device;
 				}
 			}
 		}
@@ -642,6 +644,8 @@ __hwmon_device_register(struct device *dev, const char *name, void *drvdata,
 
 	return hdev;
 
+free_device:
+	device_unregister(hdev);
 free_hwmon:
 	kfree(hwdev);
 ida_remove:

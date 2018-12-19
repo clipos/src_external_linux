@@ -324,8 +324,9 @@ static inline unsigned int nanddev_ntargets(const struct nand_device *nand)
  */
 static inline unsigned int nanddev_neraseblocks(const struct nand_device *nand)
 {
-	return nand->memorg.ntargets * nand->memorg.luns_per_target *
-	       nand->memorg.eraseblocks_per_lun;
+	return (u64)nand->memorg.luns_per_target *
+	       nand->memorg.eraseblocks_per_lun *
+	       nand->memorg.pages_per_eraseblock;
 }
 
 /**

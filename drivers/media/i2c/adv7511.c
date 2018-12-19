@@ -1355,10 +1355,10 @@ static int adv7511_set_fmt(struct v4l2_subdev *sd,
 	state->xfer_func = format->format.xfer_func;
 
 	switch (format->format.colorspace) {
-	case V4L2_COLORSPACE_OPRGB:
+	case V4L2_COLORSPACE_ADOBERGB:
 		c = HDMI_COLORIMETRY_EXTENDED;
-		ec = y ? HDMI_EXTENDED_COLORIMETRY_OPYCC_601 :
-			 HDMI_EXTENDED_COLORIMETRY_OPRGB;
+		ec = y ? HDMI_EXTENDED_COLORIMETRY_ADOBE_YCC_601 :
+			 HDMI_EXTENDED_COLORIMETRY_ADOBE_RGB;
 		break;
 	case V4L2_COLORSPACE_SMPTE170M:
 		c = y ? HDMI_COLORIMETRY_ITU_601 : HDMI_COLORIMETRY_NONE;
@@ -1847,6 +1847,7 @@ static int adv7511_probe(struct i2c_client *client, const struct i2c_device_id *
 		goto err_hdl;
 	}
 	state->pad.flags = MEDIA_PAD_FL_SINK;
+	sd->entity.function = MEDIA_ENT_F_DV_ENCODER;
 	err = media_entity_pads_init(&sd->entity, 1, &state->pad);
 	if (err)
 		goto err_hdl;

@@ -28,6 +28,7 @@
 #include <linux/tcp.h>
 #include <linux/udp.h>
 #include <linux/dccp.h>
+#include <linux/icmpv6.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
 #include <linux/pipe_fs_i.h>
@@ -420,7 +421,6 @@ static int smk_ptrace_rule_check(struct task_struct *tracer,
 	struct smk_audit_info ad, *saip = NULL;
 	struct task_smack *tsp;
 	struct smack_known *tracer_known;
-	const struct cred *tracercred;
 
 	if ((mode & PTRACE_MODE_NOAUDIT) == 0) {
 		smk_ad_init(&ad, func, LSM_AUDIT_DATA_TASK);
@@ -429,8 +429,7 @@ static int smk_ptrace_rule_check(struct task_struct *tracer,
 	}
 
 	rcu_read_lock();
-	tracercred = __task_cred(tracer);
-	tsp = tracercred->security;
+	tsp = __task_cred(tracer)->security;
 	tracer_known = smk_of_task(tsp);
 
 	if ((mode & PTRACE_MODE_ATTACH) &&
@@ -440,7 +439,7 @@ static int smk_ptrace_rule_check(struct task_struct *tracer,
 			rc = 0;
 		else if (smack_ptrace_rule == SMACK_PTRACE_DRACONIAN)
 			rc = -EACCES;
-		else if (smack_privileged_cred(CAP_SYS_PTRACE, tracercred))
+		else if (capable(CAP_SYS_PTRACE))
 			rc = 0;
 		else
 			rc = -EACCES;
@@ -1842,7 +1841,6 @@ static int smack_file_send_sigiotask(struct task_struct *tsk,
 {
 	struct smack_known *skp;
 	struct smack_known *tkp = smk_of_task(tsk->cred->security);
-	const struct cred *tcred;
 	struct file *file;
 	int rc;
 	struct smk_audit_info ad;
@@ -1856,12 +1854,8 @@ static int smack_file_send_sigiotask(struct task_struct *tsk,
 	skp = file->f_security;
 	rc = smk_access(skp, tkp, MAY_DELIVER, NULL);
 	rc = smk_bu_note("sigiotask", skp, tkp, MAY_DELIVER, rc);
-
-	rcu_read_lock();
-	tcred = __task_cred(tsk);
-	if (rc != 0 && smack_privileged_cred(CAP_MAC_OVERRIDE, tcred))
+	if (rc != 0 && has_capability(tsk, CAP_MAC_OVERRIDE))
 		rc = 0;
-	rcu_read_unlock();
 
 	smk_ad_init(&ad, __func__, LSM_AUDIT_DATA_TASK);
 	smk_ad_setfield_u_tsk(&ad, tsk);
@@ -1934,9 +1928,9 @@ static int smack_file_receive(struct file *file)
  *
  * Returns 0
  */
-static int smack_file_open(struct file *file, const struct cred *cred)
+static int smack_file_open(struct file *file)
 {
-	struct task_smack *tsp = cred->security;
+	struct task_smack *tsp = file->f_cred->security;
 	struct inode *inode = file_inode(file);
 	struct smk_audit_info ad;
 	int rc;
@@ -1944,7 +1938,7 @@ static int smack_file_open(struct file *file, const struct cred *cred)
 	smk_ad_init(&ad, __func__, LSM_AUDIT_DATA_PATH);
 	smk_ad_setfield_u_fs_path(&ad, file->f_path);
 	rc = smk_tskacc(tsp, smk_of_inode(inode), MAY_READ, &ad);
-	rc = smk_bu_credfile(cred, file, MAY_READ, rc);
+	rc = smk_bu_credfile(file->f_cred, file, MAY_READ, rc);
 
 	return rc;
 }
@@ -3903,6 +3897,7 @@ static int smk_skb_to_addr_ipv6(struct sk_buff *skb, struct sockaddr_in6 *sip)
 			sip->sin6_port = th->source;
 		break;
 	case IPPROTO_UDP:
+	case IPPROTO_UDPLITE:
 		uh = skb_header_pointer(skb, offset, sizeof(_udph), &_udph);
 		if (uh != NULL)
 			sip->sin6_port = uh->source;
@@ -3993,7 +3988,8 @@ access_check:
 #if IS_ENABLED(CONFIG_IPV6)
 	case PF_INET6:
 		proto = smk_skb_to_addr_ipv6(skb, &sadd);
-		if (proto != IPPROTO_UDP && proto != IPPROTO_TCP)
+		if (proto != IPPROTO_UDP && proto != IPPROTO_UDPLITE &&
+		    proto != IPPROTO_TCP && proto != IPPROTO_DCCP)
 			break;
 #ifdef SMACK_IPV6_SECMARK_LABELING
 		if (skb && skb->secmark != 0)
@@ -4015,6 +4011,9 @@ access_check:
 #ifdef SMACK_IPV6_PORT_LABELING
 		rc = smk_ipv6_port_check(sk, &sadd, SMK_RECEIVING);
 #endif /* SMACK_IPV6_PORT_LABELING */
+		if (rc != 0)
+			icmpv6_send(skb, ICMPV6_DEST_UNREACH,
+					ICMPV6_ADM_PROHIBITED, 0);
 		break;
 #endif /* CONFIG_IPV6 */
 	}

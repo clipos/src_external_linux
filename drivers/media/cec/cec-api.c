@@ -101,23 +101,6 @@ static long cec_adap_g_phys_addr(struct cec_adapter *adap,
 	return 0;
 }
 
-static int cec_validate_phys_addr(u16 phys_addr)
-{
-	int i;
-
-	if (phys_addr == CEC_PHYS_ADDR_INVALID)
-		return 0;
-	for (i = 0; i < 16; i += 4)
-		if (phys_addr & (0xf << i))
-			break;
-	if (i == 16)
-		return 0;
-	for (i += 4; i < 16; i += 4)
-		if ((phys_addr & (0xf << i)) == 0)
-			return -EINVAL;
-	return 0;
-}
-
 static long cec_adap_s_phys_addr(struct cec_adapter *adap, struct cec_fh *fh,
 				 bool block, __u16 __user *parg)
 {
@@ -129,7 +112,7 @@ static long cec_adap_s_phys_addr(struct cec_adapter *adap, struct cec_fh *fh,
 	if (copy_from_user(&phys_addr, parg, sizeof(phys_addr)))
 		return -EFAULT;
 
-	err = cec_validate_phys_addr(phys_addr);
+	err = cec_phys_addr_validate(phys_addr, NULL, NULL);
 	if (err)
 		return err;
 	mutex_lock(&adap->lock);
@@ -593,6 +576,14 @@ static int cec_open(struct inode *inode, struct file *filp)
 		if (err >= 0) {
 			ev.event = err ? CEC_EVENT_PIN_HPD_HIGH :
 					 CEC_EVENT_PIN_HPD_LOW;
+			cec_queue_event_fh(fh, &ev, 0);
+		}
+	}
+	if (adap->pin && adap->pin->ops->read_5v) {
+		err = adap->pin->ops->read_5v(adap);
+		if (err >= 0) {
+			ev.event = err ? CEC_EVENT_PIN_5V_HIGH :
+					 CEC_EVENT_PIN_5V_LOW;
 			cec_queue_event_fh(fh, &ev, 0);
 		}
 	}

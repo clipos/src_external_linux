@@ -9,7 +9,6 @@
 #include <linux/log2.h>
 #include <linux/gfp.h>
 #include <linux/slab.h>
-#include <linux/atomic.h>
 
 #include <asm/paravirt.h>
 #include <asm/qspinlock.h>
@@ -22,7 +21,6 @@
 
 static DEFINE_PER_CPU(int, lock_kicker_irq) = -1;
 static DEFINE_PER_CPU(char *, irq_name);
-static DEFINE_PER_CPU(atomic_t, xen_qlock_wait_nest);
 static bool xen_pvspin = true;
 
 static void xen_qlock_kick(int cpu)
@@ -42,24 +40,33 @@ static void xen_qlock_kick(int cpu)
 static void xen_qlock_wait(u8 *byte, u8 val)
 {
 	int irq = __this_cpu_read(lock_kicker_irq);
-	atomic_t *nest_cnt = this_cpu_ptr(&xen_qlock_wait_nest);
 
 	/* If kicker interrupts not initialized yet, just spin */
-	if (irq == -1 || in_nmi())
+	if (irq == -1)
 		return;
 
-	/* Detect reentry. */
-	atomic_inc(nest_cnt);
+	/* clear pending */
+	xen_clear_irq_pending(irq);
+	barrier();
 
-	/* If irq pending already and no nested call clear it. */
-	if (atomic_read(nest_cnt) == 1 && xen_test_irq_pending(irq)) {
-		xen_clear_irq_pending(irq);
-	} else if (READ_ONCE(*byte) == val) {
-		/* Block until irq becomes pending (or a spurious wakeup) */
-		xen_poll_irq(irq);
-	}
+	/*
+	 * We check the byte value after clearing pending IRQ to make sure
+	 * that we won't miss a wakeup event because of the clearing.
+	 *
+	 * The sync_clear_bit() call in xen_clear_irq_pending() is atomic.
+	 * So it is effectively a memory barrier for x86.
+	 */
+	if (READ_ONCE(*byte) != val)
+		return;
 
-	atomic_dec(nest_cnt);
+	/*
+	 * If an interrupt happens here, it will leave the wakeup irq
+	 * pending, which will cause xen_poll_irq() to return
+	 * immediately.
+	 */
+
+	/* Block until irq becomes pending (or perhaps a spurious wakeup) */
+	xen_poll_irq(irq);
 }
 
 static irqreturn_t dummy_handler(int irq, void *dev_id)
@@ -122,6 +129,10 @@ PV_CALLEE_SAVE_REGS_THUNK(xen_vcpu_stolen);
  */
 void __init xen_init_spinlocks(void)
 {
+
+	/*  Don't need to use pvqspinlock code if there is only 1 vCPU. */
+	if (num_possible_cpus() == 1)
+		xen_pvspin = false;
 
 	if (!xen_pvspin) {
 		printk(KERN_DEBUG "xen: PV spinlocks disabled\n");

@@ -68,6 +68,7 @@
 #include <asm/opal.h>
 #include <asm/cputhreads.h>
 #include <asm/hw_irq.h>
+#include <asm/feature-fixups.h>
 
 #include "setup.h"
 
@@ -242,19 +243,13 @@ static void cpu_ready_for_interrupts(void)
 	}
 
 	/*
-	 * Set HFSCR:TM based on CPU features:
-	 * In the special case of TM no suspend (P9N DD2.1), Linux is
-	 * told TM is off via the dt-ftrs but told to (partially) use
-	 * it via OPAL_REINIT_CPUS_TM_SUSPEND_DISABLED. So HFSCR[TM]
-	 * will be off from dt-ftrs but we need to turn it on for the
-	 * no suspend case.
+	 * Fixup HFSCR:TM based on CPU features. The bit is set by our
+	 * early asm init because at that point we haven't updated our
+	 * CPU features from firmware and device-tree. Here we have,
+	 * so let's do it.
 	 */
-	if (cpu_has_feature(CPU_FTR_HVMODE)) {
-		if (cpu_has_feature(CPU_FTR_TM_COMP))
-			mtspr(SPRN_HFSCR, mfspr(SPRN_HFSCR) | HFSCR_TM);
-		else
-			mtspr(SPRN_HFSCR, mfspr(SPRN_HFSCR) & ~HFSCR_TM);
-	}
+	if (cpu_has_feature(CPU_FTR_HVMODE) && !cpu_has_feature(CPU_FTR_TM_COMP))
+		mtspr(SPRN_HFSCR, mfspr(SPRN_HFSCR) & ~HFSCR_TM);
 
 	/* Set IR and DR in PACA MSR */
 	get_paca()->kernel_msr = MSR_KERNEL;

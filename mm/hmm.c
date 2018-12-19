@@ -91,6 +91,16 @@ static struct hmm *hmm_register(struct mm_struct *mm)
 	spin_lock_init(&hmm->lock);
 	hmm->mm = mm;
 
+	/*
+	 * We should only get here if hold the mmap_sem in write mode ie on
+	 * registration of first mirror through hmm_mirror_register()
+	 */
+	hmm->mmu_notifier.ops = &hmm_mmu_notifier_ops;
+	if (__mmu_notifier_register(&hmm->mmu_notifier, mm)) {
+		kfree(hmm);
+		return NULL;
+	}
+
 	spin_lock(&mm->page_table_lock);
 	if (!mm->hmm)
 		mm->hmm = hmm;
@@ -98,27 +108,12 @@ static struct hmm *hmm_register(struct mm_struct *mm)
 		cleanup = true;
 	spin_unlock(&mm->page_table_lock);
 
-	if (cleanup)
-		goto error;
-
-	/*
-	 * We should only get here if hold the mmap_sem in write mode ie on
-	 * registration of first mirror through hmm_mirror_register()
-	 */
-	hmm->mmu_notifier.ops = &hmm_mmu_notifier_ops;
-	if (__mmu_notifier_register(&hmm->mmu_notifier, mm))
-		goto error_mm;
+	if (cleanup) {
+		mmu_notifier_unregister(&hmm->mmu_notifier, mm);
+		kfree(hmm);
+	}
 
 	return mm->hmm;
-
-error_mm:
-	spin_lock(&mm->page_table_lock);
-	if (mm->hmm == hmm)
-		mm->hmm = NULL;
-	spin_unlock(&mm->page_table_lock);
-error:
-	kfree(hmm);
-	return NULL;
 }
 
 void hmm_mm_destroy(struct mm_struct *mm)
@@ -182,16 +177,19 @@ static void hmm_release(struct mmu_notifier *mn, struct mm_struct *mm)
 	up_write(&hmm->mirrors_sem);
 }
 
-static void hmm_invalidate_range_start(struct mmu_notifier *mn,
+static int hmm_invalidate_range_start(struct mmu_notifier *mn,
 				       struct mm_struct *mm,
 				       unsigned long start,
-				       unsigned long end)
+				       unsigned long end,
+				       bool blockable)
 {
 	struct hmm *hmm = mm->hmm;
 
 	VM_BUG_ON(!hmm);
 
 	atomic_inc(&hmm->sequence);
+
+	return 0;
 }
 
 static void hmm_invalidate_range_end(struct mmu_notifier *mn,
@@ -280,13 +278,12 @@ void hmm_mirror_unregister(struct hmm_mirror *mirror)
 	if (!should_unregister || mm == NULL)
 		return;
 
-	mmu_notifier_unregister_no_release(&hmm->mmu_notifier, mm);
-
 	spin_lock(&mm->page_table_lock);
 	if (mm->hmm == hmm)
 		mm->hmm = NULL;
 	spin_unlock(&mm->page_table_lock);
 
+	mmu_notifier_unregister_no_release(&hmm->mmu_notifier, mm);
 	kfree(hmm);
 }
 EXPORT_SYMBOL(hmm_mirror_unregister);
@@ -305,14 +302,14 @@ static int hmm_vma_do_fault(struct mm_walk *walk, unsigned long addr,
 	struct hmm_vma_walk *hmm_vma_walk = walk->private;
 	struct hmm_range *range = hmm_vma_walk->range;
 	struct vm_area_struct *vma = walk->vma;
-	int r;
+	vm_fault_t ret;
 
 	flags |= hmm_vma_walk->block ? 0 : FAULT_FLAG_ALLOW_RETRY;
 	flags |= write_fault ? FAULT_FLAG_WRITE : 0;
-	r = handle_mm_fault(vma, addr, flags);
-	if (r & VM_FAULT_RETRY)
+	ret = handle_mm_fault(vma, addr, flags);
+	if (ret & VM_FAULT_RETRY)
 		return -EBUSY;
-	if (r & VM_FAULT_ERROR) {
+	if (ret & VM_FAULT_ERROR) {
 		*pfn = range->values[HMM_PFN_ERROR];
 		return -EFAULT;
 	}
@@ -682,7 +679,8 @@ int hmm_vma_get_pfns(struct hmm_range *range)
 		return -EINVAL;
 
 	/* FIXME support hugetlb fs */
-	if (is_vm_hugetlb_page(vma) || (vma->vm_flags & VM_SPECIAL)) {
+	if (is_vm_hugetlb_page(vma) || (vma->vm_flags & VM_SPECIAL) ||
+			vma_is_dax(vma)) {
 		hmm_pfns_special(range);
 		return -EINVAL;
 	}
@@ -855,7 +853,8 @@ int hmm_vma_fault(struct hmm_range *range, bool block)
 		return -EINVAL;
 
 	/* FIXME support hugetlb fs */
-	if (is_vm_hugetlb_page(vma) || (vma->vm_flags & VM_SPECIAL)) {
+	if (is_vm_hugetlb_page(vma) || (vma->vm_flags & VM_SPECIAL) ||
+			vma_is_dax(vma)) {
 		hmm_pfns_special(range);
 		return -EINVAL;
 	}
@@ -979,10 +978,7 @@ static RADIX_TREE(hmm_devmem_radix, GFP_KERNEL);
 
 static void hmm_devmem_radix_release(struct resource *resource)
 {
-	resource_size_t key, align_start, align_size;
-
-	align_start = resource->start & ~(PA_SECTION_SIZE - 1);
-	align_size = ALIGN(resource_size(resource), PA_SECTION_SIZE);
+	resource_size_t key;
 
 	mutex_lock(&hmm_devmem_lock);
 	for (key = resource->start;

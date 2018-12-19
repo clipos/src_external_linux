@@ -204,14 +204,6 @@ static int v9fs_file_do_lock(struct file *filp, int cmd, struct file_lock *fl)
 			break;
 		if (schedule_timeout_interruptible(P9_LOCK_TIMEOUT) != 0)
 			break;
-		/*
-		 * p9_client_lock_dotl overwrites flock.client_id with the
-		 * server message, free and reuse the client name
-		 */
-		if (flock.client_id != fid->clnt->name) {
-			kfree(flock.client_id);
-			flock.client_id = fid->clnt->name;
-		}
 	}
 
 	/* map 9p status to VFS status */
@@ -243,8 +235,6 @@ out_unlock:
 		locks_lock_file_wait(filp, fl);
 		fl->fl_type = fl_type;
 	}
-	if (flock.client_id != fid->clnt->name)
-		kfree(flock.client_id);
 out:
 	return res;
 }
@@ -279,7 +269,7 @@ static int v9fs_file_getlock(struct file *filp, struct file_lock *fl)
 
 	res = p9_client_getlock_dotl(fid, &glock);
 	if (res < 0)
-		goto out;
+		return res;
 	/* map 9p lock type to os lock type */
 	switch (glock.type) {
 	case P9_LOCK_TYPE_RDLCK:
@@ -300,9 +290,7 @@ static int v9fs_file_getlock(struct file *filp, struct file_lock *fl)
 			fl->fl_end = glock.start + glock.length - 1;
 		fl->fl_pid = -glock.proc_id;
 	}
-out:
-	if (glock.client_id != fid->clnt->name)
-		kfree(glock.client_id);
+	kfree(glock.client_id);
 	return res;
 }
 
@@ -545,7 +533,7 @@ v9fs_mmap_file_mmap(struct file *filp, struct vm_area_struct *vma)
 	return retval;
 }
 
-static int
+static vm_fault_t
 v9fs_vm_page_mkwrite(struct vm_fault *vmf)
 {
 	struct v9fs_inode *v9inode;

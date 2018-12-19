@@ -1079,9 +1079,10 @@ static int sunxi_pinctrl_build_state(struct platform_device *pdev)
 	 * We suppose that we won't have any more functions than pins,
 	 * we'll reallocate that later anyway
 	 */
-	pctl->functions = kcalloc(pctl->ngroups,
-				  sizeof(*pctl->functions),
-				  GFP_KERNEL);
+	pctl->functions = devm_kcalloc(&pdev->dev,
+				       pctl->ngroups,
+				       sizeof(*pctl->functions),
+				       GFP_KERNEL);
 	if (!pctl->functions)
 		return -ENOMEM;
 
@@ -1132,10 +1133,8 @@ static int sunxi_pinctrl_build_state(struct platform_device *pdev)
 
 			func_item = sunxi_pinctrl_find_function_by_name(pctl,
 									func->name);
-			if (!func_item) {
-				kfree(pctl->functions);
+			if (!func_item)
 				return -EINVAL;
-			}
 
 			if (!func_item->groups) {
 				func_item->groups =
@@ -1143,10 +1142,8 @@ static int sunxi_pinctrl_build_state(struct platform_device *pdev)
 						     func_item->ngroups,
 						     sizeof(*func_item->groups),
 						     GFP_KERNEL);
-				if (!func_item->groups) {
-					kfree(pctl->functions);
+				if (!func_item->groups)
 					return -ENOMEM;
-				}
 			}
 
 			func_grp = func_item->groups;

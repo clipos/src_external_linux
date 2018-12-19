@@ -1578,12 +1578,6 @@ static int iceland_populate_smc_acp_level(struct pp_hwmgr *hwmgr,
 	return 0;
 }
 
-static int iceland_populate_smc_samu_level(struct pp_hwmgr *hwmgr,
-	SMU71_Discrete_DpmTable *table)
-{
-	return 0;
-}
-
 static int iceland_populate_memory_timing_parameters(
 		struct pp_hwmgr *hwmgr,
 		uint32_t engine_clock,
@@ -1992,10 +1986,6 @@ static int iceland_init_smc_table(struct pp_hwmgr *hwmgr)
 	PP_ASSERT_WITH_CODE(0 == result,
 		"Failed to initialize ACP Level!", return result;);
 
-	result = iceland_populate_smc_samu_level(hwmgr, table);
-	PP_ASSERT_WITH_CODE(0 == result,
-		"Failed to initialize SAMU Level!", return result;);
-
 	/* Since only the initial state is completely set up at this point (the other states are just copies of the boot state) we only */
 	/* need to populate the  ARB settings for the initial state. */
 	result = iceland_program_memory_timing_parameters(hwmgr);
@@ -2246,13 +2236,11 @@ static uint32_t iceland_get_offsetof(uint32_t type, uint32_t member)
 		case DRAM_LOG_BUFF_SIZE:
 			return offsetof(SMU71_SoftRegisters, DRAM_LOG_BUFF_SIZE);
 		}
-		break;
 	case SMU_Discrete_DpmTable:
 		switch (member) {
 		case LowSclkInterruptThreshold:
 			return offsetof(SMU71_Discrete_DpmTable, LowSclkInterruptThreshold);
 		}
-		break;
 	}
 	pr_warn("can't get the offset of type %x member %x\n", type, member);
 	return 0;

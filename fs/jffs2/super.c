@@ -285,8 +285,10 @@ static int jffs2_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_fs_info = c;
 
 	ret = jffs2_parse_options(c, data);
-	if (ret)
+	if (ret) {
+		kfree(c);
 		return -EINVAL;
+	}
 
 	/* Initialize JFFS2 superblock locks, the further initialization will
 	 * be done later */

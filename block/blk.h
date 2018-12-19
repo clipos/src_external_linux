@@ -234,6 +234,8 @@ static inline void elv_deactivate_rq(struct request_queue *q, struct request *rq
 
 int elevator_init(struct request_queue *);
 int elevator_init_mq(struct request_queue *q);
+int elevator_switch_mq(struct request_queue *q,
+			      struct elevator_type *new_e);
 void elevator_exit(struct request_queue *, struct elevator_queue *);
 int elv_register_queue(struct request_queue *q);
 void elv_unregister_queue(struct request_queue *q);
@@ -297,7 +299,7 @@ extern int blk_update_nr_requests(struct request_queue *, unsigned int);
  *	b) the queue had IO stats enabled when this request was started, and
  *	c) it's a file system request
  */
-static inline int blk_do_io_stat(struct request *rq)
+static inline bool blk_do_io_stat(struct request *rq)
 {
 	return rq->rq_disk &&
 	       (rq->rq_flags & RQF_IO_STAT) &&
@@ -324,16 +326,6 @@ static inline void blk_rq_set_deadline(struct request *rq, unsigned long time)
 static inline unsigned long blk_rq_deadline(struct request *rq)
 {
 	return rq->__deadline & ~0x1UL;
-}
-
-/*
- * The max size one bio can handle is UINT_MAX becasue bvec_iter.bi_size
- * is defined as 'unsigned int', meantime it has to aligned to with logical
- * block size which is the minimum accepted unit by hardware.
- */
-static inline unsigned int bio_allowed_max_sectors(struct request_queue *q)
-{
-	return round_down(UINT_MAX, queue_logical_block_size(q)) >> 9;
 }
 
 /*
@@ -422,5 +414,11 @@ static inline void blk_queue_bounce(struct request_queue *q, struct bio **bio)
 #endif /* CONFIG_BOUNCE */
 
 extern void blk_drain_queue(struct request_queue *q);
+
+#ifdef CONFIG_BLK_CGROUP_IOLATENCY
+extern int blk_iolatency_init(struct request_queue *q);
+#else
+static inline int blk_iolatency_init(struct request_queue *q) { return 0; }
+#endif
 
 #endif /* BLK_INTERNAL_H */

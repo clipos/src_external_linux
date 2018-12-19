@@ -20,7 +20,7 @@
 
 #include <asm/vectors.h>
 #include <variant/core.h>
-#include <platform/hardware.h>
+
 OUTPUT_ARCH(xtensa)
 ENTRY(_start)
 
@@ -131,7 +131,6 @@ SECTIONS
   .fixup   : { *(.fixup) }
 
   EXCEPTION_TABLE(16)
-  NOTES
   /* Data section */
 
   _sdata = .;

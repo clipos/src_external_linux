@@ -279,7 +279,7 @@ struct ib_uverbs_query_port {
 };
 
 struct ib_uverbs_query_port_resp {
-	__u32 port_cap_flags;
+	__u32 port_cap_flags;		/* see ib_uverbs_query_port_cap_flags */
 	__u32 max_msg_sz;
 	__u32 bad_pkey_cntr;
 	__u32 qkey_viol_cntr;
@@ -299,7 +299,8 @@ struct ib_uverbs_query_port_resp {
 	__u8  active_speed;
 	__u8  phys_state;
 	__u8  link_layer;
-	__u8  reserved[2];
+	__u8  flags;			/* see ib_uverbs_query_port_flags */
+	__u8  reserved;
 };
 
 struct ib_uverbs_alloc_pd {
@@ -762,28 +763,10 @@ struct ib_uverbs_sge {
 	__u32 lkey;
 };
 
-enum ib_uverbs_wr_opcode {
-	IB_UVERBS_WR_RDMA_WRITE = 0,
-	IB_UVERBS_WR_RDMA_WRITE_WITH_IMM = 1,
-	IB_UVERBS_WR_SEND = 2,
-	IB_UVERBS_WR_SEND_WITH_IMM = 3,
-	IB_UVERBS_WR_RDMA_READ = 4,
-	IB_UVERBS_WR_ATOMIC_CMP_AND_SWP = 5,
-	IB_UVERBS_WR_ATOMIC_FETCH_AND_ADD = 6,
-	IB_UVERBS_WR_LOCAL_INV = 7,
-	IB_UVERBS_WR_BIND_MW = 8,
-	IB_UVERBS_WR_SEND_WITH_INV = 9,
-	IB_UVERBS_WR_TSO = 10,
-	IB_UVERBS_WR_RDMA_READ_WITH_INV = 11,
-	IB_UVERBS_WR_MASKED_ATOMIC_CMP_AND_SWP = 12,
-	IB_UVERBS_WR_MASKED_ATOMIC_FETCH_AND_ADD = 13,
-	/* Review enum ib_wr_opcode before modifying this */
-};
-
 struct ib_uverbs_send_wr {
 	__aligned_u64 wr_id;
 	__u32 num_sge;
-	__u32 opcode;		/* see enum ib_uverbs_wr_opcode */
+	__u32 opcode;
 	__u32 send_flags;
 	union {
 		__be32 imm_data;

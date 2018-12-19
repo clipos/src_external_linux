@@ -417,7 +417,6 @@ acpi_status acpi_ps_parse_loop(struct acpi_walk_state *walk_state)
 	union acpi_parse_object *op = NULL;	/* current op */
 	struct acpi_parse_state *parser_state;
 	u8 *aml_op_start = NULL;
-	u8 opcode_length;
 
 	ACPI_FUNCTION_TRACE_PTR(ps_parse_loop, walk_state);
 
@@ -541,19 +540,8 @@ acpi_status acpi_ps_parse_loop(struct acpi_walk_state *walk_state)
 						    "Skip parsing opcode %s",
 						    acpi_ps_get_opcode_name
 						    (walk_state->opcode)));
-
-					/*
-					 * Determine the opcode length before skipping the opcode.
-					 * An opcode can be 1 byte or 2 bytes in length.
-					 */
-					opcode_length = 1;
-					if ((walk_state->opcode & 0xFF00) ==
-					    AML_EXTENDED_OPCODE) {
-						opcode_length = 2;
-					}
 					walk_state->parser_state.aml =
-					    walk_state->aml + opcode_length;
-
+					    walk_state->aml + 1;
 					walk_state->parser_state.aml =
 					    acpi_ps_get_next_package_end
 					    (&walk_state->parser_state);
@@ -726,20 +714,20 @@ acpi_status acpi_ps_parse_loop(struct acpi_walk_state *walk_state)
 			} else
 			    if ((walk_state->
 				 parse_flags & ACPI_PARSE_MODULE_LEVEL)
-				&& status != AE_CTRL_TRANSFER
-				&& ACPI_FAILURE(status)) {
+				&& (ACPI_AML_EXCEPTION(status)
+				    || status == AE_ALREADY_EXISTS
+				    || status == AE_NOT_FOUND)) {
 				/*
-				 * ACPI_PARSE_MODULE_LEVEL flag means that we are currently
-				 * loading a table by executing it as a control method.
-				 * However, if we encounter an error while loading the table,
-				 * we need to keep trying to load the table rather than
-				 * aborting the table load (setting the status to AE_OK
-				 * continues the table load). If we get a failure at this
-				 * point, it means that the dispatcher got an error while
-				 * processing Op (most likely an AML operand error) or a
-				 * control method was called from module level and the
-				 * dispatcher returned AE_CTRL_TRANSFER. In the latter case,
-				 * leave the status alone, there's nothing wrong with it.
+				 * ACPI_PARSE_MODULE_LEVEL flag means that we
+				 * are currently loading a table by executing
+				 * it as a control method. However, if we
+				 * encounter an error while loading the table,
+				 * we need to keep trying to load the table
+				 * rather than aborting the table load (setting
+				 * the status to AE_OK continues the table
+				 * load). If we get a failure at this point, it
+				 * means that the dispatcher got an error while
+				 * trying to execute the Op.
 				 */
 				status = AE_OK;
 			}

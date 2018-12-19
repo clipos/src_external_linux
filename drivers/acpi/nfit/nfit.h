@@ -118,8 +118,10 @@ enum nfit_dimm_notifiers {
 };
 
 enum nfit_ars_state {
-	ARS_REQ_SHORT,
-	ARS_REQ_LONG,
+	ARS_REQ,
+	ARS_REQ_REDO,
+	ARS_DONE,
+	ARS_SHORT,
 	ARS_FAILED,
 };
 
@@ -196,7 +198,6 @@ struct acpi_nfit_desc {
 	struct device *dev;
 	u8 ars_start_flags;
 	struct nd_cmd_ars_status *ars_status;
-	struct nfit_spa *scrub_spa;
 	struct delayed_work dwork;
 	struct list_head list;
 	struct kernfs_node *scrub_count_state;
@@ -251,8 +252,7 @@ struct nfit_blk {
 
 extern struct list_head acpi_descs;
 extern struct mutex acpi_desc_lock;
-int acpi_nfit_ars_rescan(struct acpi_nfit_desc *acpi_desc,
-		enum nfit_ars_state req_type);
+int acpi_nfit_ars_rescan(struct acpi_nfit_desc *acpi_desc, unsigned long flags);
 
 #ifdef CONFIG_X86_MCE
 void nfit_mce_register(void);

@@ -643,7 +643,7 @@ static acpi_status __init acpi_processor_ids_walk(acpi_handle handle,
 
 	status = acpi_get_type(handle, &acpi_type);
 	if (ACPI_FAILURE(status))
-		return status;
+		return false;
 
 	switch (acpi_type) {
 	case ACPI_TYPE_PROCESSOR:
@@ -663,12 +663,11 @@ static acpi_status __init acpi_processor_ids_walk(acpi_handle handle,
 	}
 
 	processor_validated_ids_update(uid);
-	return AE_OK;
+	return true;
 
 err:
-	/* Exit on error, but don't abort the namespace walk */
 	acpi_handle_info(handle, "Invalid processor object\n");
-	return AE_OK;
+	return false;
 
 }
 

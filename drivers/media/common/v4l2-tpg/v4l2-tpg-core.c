@@ -1770,7 +1770,7 @@ typedef struct { u16 __; u8 _; } __packed x24;
 				pos[7] = (chr & (0x01 << 0) ? fg : bg);	\
 			} \
 	\
-			pos += (tpg->hflip ? -8 : 8) / (int)hdiv;	\
+			pos += (tpg->hflip ? -8 : 8) / hdiv;	\
 		}	\
 	}	\
 } while (0)

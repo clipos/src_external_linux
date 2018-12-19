@@ -39,9 +39,9 @@
 extern const char ice_drv_ver[];
 #define ICE_BAR0		0
 #define ICE_DFLT_NUM_DESC	128
-#define ICE_REQ_DESC_MULTIPLE	32
-#define ICE_MIN_NUM_DESC	ICE_REQ_DESC_MULTIPLE
+#define ICE_MIN_NUM_DESC	8
 #define ICE_MAX_NUM_DESC	8160
+#define ICE_REQ_DESC_MULTIPLE	32
 #define ICE_DFLT_TRAFFIC_CLASS	BIT(0)
 #define ICE_INT_NAME_STR_LEN	(IFNAMSIZ + 16)
 #define ICE_ETHTOOL_FWVER_LEN	32
@@ -196,9 +196,9 @@ struct ice_vsi {
 	struct list_head tmp_sync_list;		/* MAC filters to be synced */
 	struct list_head tmp_unsync_list;	/* MAC filters to be unsynced */
 
-	bool irqs_ready;
-	bool current_isup;		 /* Sync 'link up' logging */
-	bool stat_offsets_loaded;
+	u8 irqs_ready;
+	u8 current_isup;		 /* Sync 'link up' logging */
+	u8 stat_offsets_loaded;
 
 	/* queue information */
 	u8 tx_mapping_mode;		 /* ICE_MAP_MODE_[CONTIG|SCATTER] */
@@ -269,7 +269,7 @@ struct ice_pf {
 	struct ice_hw_port_stats stats;
 	struct ice_hw_port_stats stats_prev;
 	struct ice_hw hw;
-	bool stat_prev_loaded;	/* has previous stats been loaded */
+	u8 stat_prev_loaded;	/* has previous stats been loaded */
 	char int_name[ICE_INT_NAME_STR_LEN];
 };
 

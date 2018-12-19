@@ -219,7 +219,7 @@ static long snapshot_ioctl(struct file *filp, unsigned int cmd,
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	if (!mutex_trylock(&pm_mutex))
+	if (!mutex_trylock(&system_transition_mutex))
 		return -EBUSY;
 
 	lock_device_hotplug();
@@ -397,7 +397,7 @@ static long snapshot_ioctl(struct file *filp, unsigned int cmd,
 	}
 
 	unlock_device_hotplug();
-	mutex_unlock(&pm_mutex);
+	mutex_unlock(&system_transition_mutex);
 
 	return error;
 }

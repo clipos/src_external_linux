@@ -42,6 +42,7 @@
 
 #include <rdma/ib_mad.h>
 #include <rdma/ib_pma.h>
+#include <rdma/ib_cache.h>
 
 struct ib_port;
 
@@ -346,7 +347,7 @@ static struct attribute *port_default_attrs[] = {
 	NULL
 };
 
-static size_t print_ndev(struct ib_gid_attr *gid_attr, char *buf)
+static size_t print_ndev(const struct ib_gid_attr *gid_attr, char *buf)
 {
 	if (!gid_attr->ndev)
 		return -EINVAL;
@@ -354,33 +355,26 @@ static size_t print_ndev(struct ib_gid_attr *gid_attr, char *buf)
 	return sprintf(buf, "%s\n", gid_attr->ndev->name);
 }
 
-static size_t print_gid_type(struct ib_gid_attr *gid_attr, char *buf)
+static size_t print_gid_type(const struct ib_gid_attr *gid_attr, char *buf)
 {
 	return sprintf(buf, "%s\n", ib_cache_gid_type_str(gid_attr->gid_type));
 }
 
-static ssize_t _show_port_gid_attr(struct ib_port *p,
-				   struct port_attribute *attr,
-				   char *buf,
-				   size_t (*print)(struct ib_gid_attr *gid_attr,
-						   char *buf))
+static ssize_t _show_port_gid_attr(
+	struct ib_port *p, struct port_attribute *attr, char *buf,
+	size_t (*print)(const struct ib_gid_attr *gid_attr, char *buf))
 {
 	struct port_table_attribute *tab_attr =
 		container_of(attr, struct port_table_attribute, attr);
-	union ib_gid gid;
-	struct ib_gid_attr gid_attr = {};
+	const struct ib_gid_attr *gid_attr;
 	ssize_t ret;
 
-	ret = ib_query_gid(p->ibdev, p->port_num, tab_attr->index, &gid,
-			   &gid_attr);
-	if (ret)
-		goto err;
+	gid_attr = rdma_get_gid_attr(p->ibdev, p->port_num, tab_attr->index);
+	if (IS_ERR(gid_attr))
+		return PTR_ERR(gid_attr);
 
-	ret = print(&gid_attr, buf);
-
-err:
-	if (gid_attr.ndev)
-		dev_put(gid_attr.ndev);
+	ret = print(gid_attr, buf);
+	rdma_put_gid_attr(gid_attr);
 	return ret;
 }
 
@@ -389,26 +383,28 @@ static ssize_t show_port_gid(struct ib_port *p, struct port_attribute *attr,
 {
 	struct port_table_attribute *tab_attr =
 		container_of(attr, struct port_table_attribute, attr);
-	union ib_gid *pgid;
-	union ib_gid gid;
+	const struct ib_gid_attr *gid_attr;
 	ssize_t ret;
 
-	ret = ib_query_gid(p->ibdev, p->port_num, tab_attr->index, &gid, NULL);
+	gid_attr = rdma_get_gid_attr(p->ibdev, p->port_num, tab_attr->index);
+	if (IS_ERR(gid_attr)) {
+		const union ib_gid zgid = {};
 
-	/* If reading GID fails, it is likely due to GID entry being empty
-	 * (invalid) or reserved GID in the table.
-	 * User space expects to read GID table entries as long as it given
-	 * index is within GID table size.
-	 * Administrative/debugging tool fails to query rest of the GID entries
-	 * if it hits error while querying a GID of the given index.
-	 * To avoid user space throwing such error on fail to read gid, return
-	 * zero GID as before. This maintains backward compatibility.
-	 */
-	if (ret)
-		pgid = &zgid;
-	else
-		pgid = &gid;
-	return sprintf(buf, "%pI6\n", pgid->raw);
+		/* If reading GID fails, it is likely due to GID entry being
+		 * empty (invalid) or reserved GID in the table.  User space
+		 * expects to read GID table entries as long as it given index
+		 * is within GID table size.  Administrative/debugging tool
+		 * fails to query rest of the GID entries if it hits error
+		 * while querying a GID of the given index.  To avoid user
+		 * space throwing such error on fail to read gid, return zero
+		 * GID as before. This maintains backward compatibility.
+		 */
+		return sprintf(buf, "%pI6\n", zgid.raw);
+	}
+
+	ret = sprintf(buf, "%pI6\n", gid_attr->gid.raw);
+	rdma_put_gid_attr(gid_attr);
+	return ret;
 }
 
 static ssize_t show_port_gid_attr_ndev(struct ib_port *p,
@@ -516,7 +512,7 @@ static ssize_t show_pma_counter(struct ib_port *p, struct port_attribute *attr,
 	ret = get_perf_mad(p->ibdev, p->port_num, tab_attr->attr_id, &data,
 			40 + offset / 8, sizeof(data));
 	if (ret < 0)
-		return ret;
+		return sprintf(buf, "N/A (no PMA)\n");
 
 	switch (width) {
 	case 4:
@@ -1061,12 +1057,10 @@ static int add_port(struct ib_device *device, int port_num,
 		goto err_put;
 	}
 
-	if (device->process_mad) {
-		p->pma_table = get_counter_table(device, port_num);
-		ret = sysfs_create_group(&p->kobj, p->pma_table);
-		if (ret)
-			goto err_put_gid_attrs;
-	}
+	p->pma_table = get_counter_table(device, port_num);
+	ret = sysfs_create_group(&p->kobj, p->pma_table);
+	if (ret)
+		goto err_put_gid_attrs;
 
 	p->gid_group.name  = "gids";
 	p->gid_group.attrs = alloc_group_attrs(show_port_gid, attr.gid_tbl_len);
@@ -1179,8 +1173,7 @@ err_free_gid:
 	p->gid_group.attrs = NULL;
 
 err_remove_pma:
-	if (p->pma_table)
-		sysfs_remove_group(&p->kobj, p->pma_table);
+	sysfs_remove_group(&p->kobj, p->pma_table);
 
 err_put_gid_attrs:
 	kobject_put(&p->gid_attr_group->kobj);
@@ -1292,9 +1285,7 @@ static void free_port_list_attributes(struct ib_device *device)
 			kfree(port->hw_stats);
 			free_hsag(&port->kobj, port->hw_stats_ag);
 		}
-
-		if (port->pma_table)
-			sysfs_remove_group(p, port->pma_table);
+		sysfs_remove_group(p, port->pma_table);
 		sysfs_remove_group(p, &port->pkey_group);
 		sysfs_remove_group(p, &port->gid_group);
 		sysfs_remove_group(&port->gid_attr_group->kobj,

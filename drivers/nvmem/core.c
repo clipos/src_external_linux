@@ -31,7 +31,6 @@ struct nvmem_device {
 	struct device		dev;
 	int			stride;
 	int			word_size;
-	int			ncells;
 	int			id;
 	int			users;
 	size_t			size;
@@ -389,7 +388,6 @@ int nvmem_add_cells(struct nvmem_device *nvmem,
 		nvmem_cell_add(cells[i]);
 	}
 
-	nvmem->ncells = ncells;
 	/* remove tmp array */
 	kfree(cells);
 
@@ -518,17 +516,11 @@ struct nvmem_device *nvmem_register(const struct nvmem_config *config)
 			goto err_device_del;
 	}
 
-	if (config->cells) {
-		rval = nvmem_add_cells(nvmem, config->cells, config->ncells);
-		if (rval)
-			goto err_teardown_compat;
-	}
+	if (config->cells)
+		nvmem_add_cells(nvmem, config->cells, config->ncells);
 
 	return nvmem;
 
-err_teardown_compat:
-	if (config->compat)
-		device_remove_bin_file(nvmem->base_dev, &nvmem->eeprom);
 err_device_del:
 	device_del(&nvmem->dev);
 err_put_device:

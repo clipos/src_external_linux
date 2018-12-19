@@ -1220,7 +1220,7 @@ static int mtk_hdmi_conn_get_modes(struct drm_connector *conn)
 
 	hdmi->dvi_mode = !drm_detect_monitor_audio(edid);
 
-	drm_mode_connector_update_edid_property(conn, edid);
+	drm_connector_update_edid_property(conn, edid);
 
 	ret = drm_add_edid_modes(conn, edid);
 	kfree(edid);
@@ -1306,7 +1306,7 @@ static int mtk_hdmi_bridge_attach(struct drm_bridge *bridge)
 	hdmi->conn.interlace_allowed = true;
 	hdmi->conn.doublescan_allowed = false;
 
-	ret = drm_mode_connector_attach_encoder(&hdmi->conn,
+	ret = drm_connector_attach_encoder(&hdmi->conn,
 						bridge->encoder);
 	if (ret) {
 		dev_err(hdmi->dev,
@@ -1446,7 +1446,8 @@ static int mtk_hdmi_dt_parse_pdata(struct mtk_hdmi *hdmi,
 	}
 
 	/* The CEC module handles HDMI hotplug detection */
-	cec_np = of_get_compatible_child(np->parent, "mediatek,mt8173-cec");
+	cec_np = of_find_compatible_node(np->parent, NULL,
+					 "mediatek,mt8173-cec");
 	if (!cec_np) {
 		dev_err(dev, "Failed to find CEC node\n");
 		return -EINVAL;
@@ -1456,10 +1457,8 @@ static int mtk_hdmi_dt_parse_pdata(struct mtk_hdmi *hdmi,
 	if (!cec_pdev) {
 		dev_err(hdmi->dev, "Waiting for CEC device %pOF\n",
 			cec_np);
-		of_node_put(cec_np);
 		return -EPROBE_DEFER;
 	}
-	of_node_put(cec_np);
 	hdmi->cec_dev = &cec_pdev->dev;
 
 	/*

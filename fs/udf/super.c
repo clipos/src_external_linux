@@ -613,11 +613,14 @@ static int udf_remount_fs(struct super_block *sb, int *flags, char *options)
 	struct udf_options uopt;
 	struct udf_sb_info *sbi = UDF_SB(sb);
 	int error = 0;
-
-	if (!(*flags & SB_RDONLY) && UDF_QUERY_FLAG(sb, UDF_FLAG_RW_INCOMPAT))
-		return -EACCES;
+	struct logicalVolIntegrityDescImpUse *lvidiu = udf_sb_lvidiu(sb);
 
 	sync_filesystem(sb);
+	if (lvidiu) {
+		int write_rev = le16_to_cpu(lvidiu->minUDFWriteRev);
+		if (write_rev > UDF_MAX_WRITE_VERSION && !(*flags & SB_RDONLY))
+			return -EACCES;
+	}
 
 	uopt.flags = sbi->s_flags;
 	uopt.uid   = sbi->s_uid;
@@ -761,9 +764,7 @@ static int udf_find_fileset(struct super_block *sb,
 			    struct kernel_lb_addr *root)
 {
 	struct buffer_head *bh = NULL;
-	long lastblock;
 	uint16_t ident;
-	struct udf_sb_info *sbi;
 
 	if (fileset->logicalBlockNum != 0xFFFFFFFF ||
 	    fileset->partitionReferenceNum != 0xFFFF) {
@@ -776,69 +777,11 @@ static int udf_find_fileset(struct super_block *sb,
 			return 1;
 		}
 
-	}
-
-	sbi = UDF_SB(sb);
-	if (!bh) {
-		/* Search backwards through the partitions */
-		struct kernel_lb_addr newfileset;
-
-/* --> cvg: FIXME - is it reasonable? */
-		return 1;
-
-		for (newfileset.partitionReferenceNum = sbi->s_partitions - 1;
-		     (newfileset.partitionReferenceNum != 0xFFFF &&
-		      fileset->logicalBlockNum == 0xFFFFFFFF &&
-		      fileset->partitionReferenceNum == 0xFFFF);
-		     newfileset.partitionReferenceNum--) {
-			lastblock = sbi->s_partmaps
-					[newfileset.partitionReferenceNum]
-						.s_partition_len;
-			newfileset.logicalBlockNum = 0;
-
-			do {
-				bh = udf_read_ptagged(sb, &newfileset, 0,
-						      &ident);
-				if (!bh) {
-					newfileset.logicalBlockNum++;
-					continue;
-				}
-
-				switch (ident) {
-				case TAG_IDENT_SBD:
-				{
-					struct spaceBitmapDesc *sp;
-					sp = (struct spaceBitmapDesc *)
-								bh->b_data;
-					newfileset.logicalBlockNum += 1 +
-						((le32_to_cpu(sp->numOfBytes) +
-						  sizeof(struct spaceBitmapDesc)
-						  - 1) >> sb->s_blocksize_bits);
-					brelse(bh);
-					break;
-				}
-				case TAG_IDENT_FSD:
-					*fileset = newfileset;
-					break;
-				default:
-					newfileset.logicalBlockNum++;
-					brelse(bh);
-					bh = NULL;
-					break;
-				}
-			} while (newfileset.logicalBlockNum < lastblock &&
-				 fileset->logicalBlockNum == 0xFFFFFFFF &&
-				 fileset->partitionReferenceNum == 0xFFFF);
-		}
-	}
-
-	if ((fileset->logicalBlockNum != 0xFFFFFFFF ||
-	     fileset->partitionReferenceNum != 0xFFFF) && bh) {
 		udf_debug("Fileset at block=%u, partition=%u\n",
 			  fileset->logicalBlockNum,
 			  fileset->partitionReferenceNum);
 
-		sbi->s_partition = fileset->partitionReferenceNum;
+		UDF_SB(sb)->s_partition = fileset->partitionReferenceNum;
 		udf_load_fileset(sb, bh, root);
 		brelse(bh);
 		return 0;
@@ -1314,7 +1257,6 @@ static int udf_load_partdesc(struct super_block *sb, sector_t block)
 			ret = -EACCES;
 			goto out_bh;
 		}
-		UDF_SET_FLAG(sb, UDF_FLAG_RW_INCOMPAT);
 		ret = udf_load_vat(sb, i, type1_idx);
 		if (ret < 0)
 			goto out_bh;
@@ -1985,7 +1927,7 @@ static void udf_open_lvid(struct super_block *sb)
 	struct buffer_head *bh = sbi->s_lvid_bh;
 	struct logicalVolIntegrityDesc *lvid;
 	struct logicalVolIntegrityDescImpUse *lvidiu;
-	struct timespec ts;
+	struct timespec64 ts;
 
 	if (!bh)
 		return;
@@ -1997,7 +1939,7 @@ static void udf_open_lvid(struct super_block *sb)
 	mutex_lock(&sbi->s_alloc_mutex);
 	lvidiu->impIdent.identSuffix[0] = UDF_OS_CLASS_UNIX;
 	lvidiu->impIdent.identSuffix[1] = UDF_OS_ID_LINUX;
-	ktime_get_real_ts(&ts);
+	ktime_get_real_ts64(&ts);
 	udf_time_to_disk_stamp(&lvid->recordingDateAndTime, ts);
 	if (le32_to_cpu(lvid->integrityType) == LVID_INTEGRITY_TYPE_CLOSE)
 		lvid->integrityType = cpu_to_le32(LVID_INTEGRITY_TYPE_OPEN);
@@ -2022,7 +1964,7 @@ static void udf_close_lvid(struct super_block *sb)
 	struct buffer_head *bh = sbi->s_lvid_bh;
 	struct logicalVolIntegrityDesc *lvid;
 	struct logicalVolIntegrityDescImpUse *lvidiu;
-	struct timespec ts;
+	struct timespec64 ts;
 
 	if (!bh)
 		return;
@@ -2034,7 +1976,7 @@ static void udf_close_lvid(struct super_block *sb)
 	mutex_lock(&sbi->s_alloc_mutex);
 	lvidiu->impIdent.identSuffix[0] = UDF_OS_CLASS_UNIX;
 	lvidiu->impIdent.identSuffix[1] = UDF_OS_ID_LINUX;
-	ktime_get_real_ts(&ts);
+	ktime_get_real_ts64(&ts);
 	udf_time_to_disk_stamp(&lvid->recordingDateAndTime, ts);
 	if (UDF_MAX_WRITE_VERSION > le16_to_cpu(lvidiu->maxUDFWriteRev))
 		lvidiu->maxUDFWriteRev = cpu_to_le16(UDF_MAX_WRITE_VERSION);
@@ -2213,12 +2155,10 @@ static int udf_fill_super(struct super_block *sb, void *options, int silent)
 				UDF_MAX_READ_VERSION);
 			ret = -EINVAL;
 			goto error_out;
-		} else if (minUDFWriteRev > UDF_MAX_WRITE_VERSION) {
-			if (!sb_rdonly(sb)) {
-				ret = -EACCES;
-				goto error_out;
-			}
-			UDF_SET_FLAG(sb, UDF_FLAG_RW_INCOMPAT);
+		} else if (minUDFWriteRev > UDF_MAX_WRITE_VERSION &&
+			   !sb_rdonly(sb)) {
+			ret = -EACCES;
+			goto error_out;
 		}
 
 		sbi->s_udfrev = minUDFWriteRev;
@@ -2236,12 +2176,10 @@ static int udf_fill_super(struct super_block *sb, void *options, int silent)
 	}
 
 	if (sbi->s_partmaps[sbi->s_partition].s_partition_flags &
-			UDF_PART_FLAG_READ_ONLY) {
-		if (!sb_rdonly(sb)) {
-			ret = -EACCES;
-			goto error_out;
-		}
-		UDF_SET_FLAG(sb, UDF_FLAG_RW_INCOMPAT);
+			UDF_PART_FLAG_READ_ONLY &&
+	    !sb_rdonly(sb)) {
+		ret = -EACCES;
+		goto error_out;
 	}
 
 	if (udf_find_fileset(sb, &fileset, &rootdir)) {

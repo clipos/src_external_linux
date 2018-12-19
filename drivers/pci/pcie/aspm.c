@@ -991,7 +991,7 @@ void pcie_aspm_exit_link_state(struct pci_dev *pdev)
 	 * All PCIe functions are in one slot, remove one function will remove
 	 * the whole slot, so just wait until we are the last function left.
 	 */
-	if (!list_empty(&parent->subordinate->devices))
+	if (!list_is_last(&pdev->bus_list, &parent->subordinate->devices))
 		goto out;
 
 	link = parent->link_state;
@@ -1127,11 +1127,9 @@ static int pcie_aspm_set_policy(const char *val,
 
 	if (aspm_disabled)
 		return -EPERM;
-	for (i = 0; i < ARRAY_SIZE(policy_str); i++)
-		if (!strncmp(val, policy_str[i], strlen(policy_str[i])))
-			break;
-	if (i >= ARRAY_SIZE(policy_str))
-		return -EINVAL;
+	i = sysfs_match_string(policy_str, val);
+	if (i < 0)
+		return i;
 	if (i == aspm_policy)
 		return 0;
 

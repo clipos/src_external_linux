@@ -30,8 +30,6 @@
 #define UDF_FLAG_LASTBLOCK_SET	16
 #define UDF_FLAG_BLOCKSIZE_SET	17
 #define UDF_FLAG_INCONSISTENT	18
-#define UDF_FLAG_RW_INCOMPAT	19	/* Set when we find RW incompatible
-					 * feature */
 
 #define UDF_PART_FLAG_UNALLOC_BITMAP	0x0001
 #define UDF_PART_FLAG_UNALLOC_TABLE	0x0002
@@ -140,7 +138,7 @@ struct udf_sb_info {
 	rwlock_t		s_cred_lock;
 
 	/* Root Info */
-	struct timespec		s_record_time;
+	struct timespec64	s_record_time;
 
 	/* Fileset Info */
 	__u16			s_serial_number;

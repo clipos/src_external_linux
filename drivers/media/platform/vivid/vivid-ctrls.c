@@ -295,7 +295,7 @@ static int vivid_user_vid_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
 
 	switch (ctrl->id) {
 	case V4L2_CID_AUTOGAIN:
-		dev->gain->val = dev->jiffies_vid_cap & 0xff;
+		dev->gain->val = (jiffies_to_msecs(jiffies) / 1000) & 0xff;
 		break;
 	}
 	return 0;
@@ -348,7 +348,7 @@ static int vivid_vid_cap_s_ctrl(struct v4l2_ctrl *ctrl)
 		V4L2_COLORSPACE_SMPTE170M,
 		V4L2_COLORSPACE_REC709,
 		V4L2_COLORSPACE_SRGB,
-		V4L2_COLORSPACE_OPRGB,
+		V4L2_COLORSPACE_ADOBERGB,
 		V4L2_COLORSPACE_BT2020,
 		V4L2_COLORSPACE_DCI_P3,
 		V4L2_COLORSPACE_SMPTE240M,
@@ -729,7 +729,7 @@ static const char * const vivid_ctrl_colorspace_strings[] = {
 	"SMPTE 170M",
 	"Rec. 709",
 	"sRGB",
-	"opRGB",
+	"AdobeRGB",
 	"BT.2020",
 	"DCI-P3",
 	"SMPTE 240M",
@@ -752,7 +752,7 @@ static const char * const vivid_ctrl_xfer_func_strings[] = {
 	"Default",
 	"Rec. 709",
 	"sRGB",
-	"opRGB",
+	"AdobeRGB",
 	"SMPTE 240M",
 	"None",
 	"DCI-P3",

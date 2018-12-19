@@ -241,7 +241,7 @@ loop:
 	refcount_set(&cur_trans->use_count, 2);
 	atomic_set(&cur_trans->pending_ordered, 0);
 	cur_trans->flags = 0;
-	cur_trans->start_time = get_seconds();
+	cur_trans->start_time = ktime_get_seconds();
 
 	memset(&cur_trans->delayed_refs, 0, sizeof(cur_trans->delayed_refs));
 
@@ -680,7 +680,7 @@ btrfs_attach_transaction_barrier(struct btrfs_root *root)
 
 	trans = start_transaction(root, 0, TRANS_ATTACH,
 				  BTRFS_RESERVE_NO_FLUSH, true);
-	if (IS_ERR(trans) && PTR_ERR(trans) == -ENOENT)
+	if (trans == ERR_PTR(-ENOENT))
 		btrfs_wait_for_commit(root->fs_info, 0);
 
 	return trans;
@@ -1152,7 +1152,7 @@ static noinline int commit_cowonly_roots(struct btrfs_trans_handle *trans)
 	ret = btrfs_run_dev_replace(trans, fs_info);
 	if (ret)
 		return ret;
-	ret = btrfs_run_qgroups(trans, fs_info);
+	ret = btrfs_run_qgroups(trans);
 	if (ret)
 		return ret;
 
@@ -1355,8 +1355,7 @@ static int qgroup_account_snapshot(struct btrfs_trans_handle *trans,
 		goto out;
 
 	/* Now qgroup are all updated, we can inherit it to new qgroups */
-	ret = btrfs_qgroup_inherit(trans, fs_info,
-				   src->root_key.objectid, dst_objectid,
+	ret = btrfs_qgroup_inherit(trans, src->root_key.objectid, dst_objectid,
 				   inherit);
 	if (ret < 0)
 		goto out;
@@ -1574,7 +1573,7 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	/*
 	 * insert root back/forward references
 	 */
-	ret = btrfs_add_root_ref(trans, fs_info, objectid,
+	ret = btrfs_add_root_ref(trans, objectid,
 				 parent_root->root_key.objectid,
 				 btrfs_ino(BTRFS_I(parent_inode)), index,
 				 dentry->d_name.name, dentry->d_name.len);
@@ -1930,9 +1929,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 		return ret;
 	}
 
-	btrfs_trans_release_metadata(trans);
-	trans->block_rsv = NULL;
-
 	/* make a pass through all the delayed refs we have so far
 	 * any runnings procs may add more while we are here
 	 */
@@ -1941,6 +1937,9 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 		btrfs_end_transaction(trans);
 		return ret;
 	}
+
+	btrfs_trans_release_metadata(trans);
+	trans->block_rsv = NULL;
 
 	cur_trans = trans->transaction;
 
@@ -2280,6 +2279,15 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 		current->journal_info = NULL;
 
 	kmem_cache_free(btrfs_trans_handle_cachep, trans);
+
+	/*
+	 * If fs has been frozen, we can not handle delayed iputs, otherwise
+	 * it'll result in deadlock about SB_FREEZE_FS.
+	 */
+	if (current != fs_info->transaction_kthread &&
+	    current != fs_info->cleaner_kthread &&
+	    !test_bit(BTRFS_FS_FROZEN, &fs_info->flags))
+		btrfs_run_delayed_iputs(fs_info);
 
 	return ret;
 
