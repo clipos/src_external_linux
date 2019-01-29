@@ -99,8 +99,7 @@ SECTIONS
 		*(.discard)
 		*(.discard.*)
 		*(.interp .dynamic)
-		*(.dynsym .dynstr .hash .gnu.hash)
-		*(.eh_frame)
+		*(.dynsym .dynstr .hash)
 	}
 
 	. = KIMAGE_VADDR + TEXT_OFFSET;
@@ -139,6 +138,23 @@ SECTIONS
 	EXCEPTION_TABLE(8)		/* __init_begin will be marked RO NX */
 	NOTES
 
+	. = ALIGN(PAGE_SIZE);
+	idmap_pg_dir = .;
+	. += IDMAP_DIR_SIZE;
+
+#ifdef CONFIG_UNMAP_KERNEL_AT_EL0
+	tramp_pg_dir = .;
+	. += PAGE_SIZE;
+#endif
+
+#ifdef CONFIG_ARM64_SW_TTBR0_PAN
+	reserved_ttbr0 = .;
+	. += RESERVED_TTBR0_SIZE;
+#endif
+	swapper_pg_dir = .;
+	. += PAGE_SIZE;
+	swapper_pg_end = .;
+
 	. = ALIGN(SEGMENT_ALIGN);
 	__init_begin = .;
 	__inittext_begin = .;
@@ -167,7 +183,6 @@ SECTIONS
 		INIT_SETUP(16)
 		INIT_CALLS
 		CON_INITCALL
-		SECURITY_INITCALL
 		INIT_RAM_FS
 		*(.init.rodata.* .init.bss)	/* from the EFI stub */
 	}
@@ -177,12 +192,12 @@ SECTIONS
 
 	PERCPU_SECTION(L1_CACHE_BYTES)
 
-	.rela.dyn : ALIGN(8) {
+	.rela : ALIGN(8) {
 		*(.rela .rela*)
 	}
 
-	__rela_offset	= ABSOLUTE(ADDR(.rela.dyn) - KIMAGE_VADDR);
-	__rela_size	= SIZEOF(.rela.dyn);
+	__rela_offset	= ABSOLUTE(ADDR(.rela) - KIMAGE_VADDR);
+	__rela_size	= SIZEOF(.rela);
 
 	. = ALIGN(SEGMENT_ALIGN);
 	__initdata_end = .;
@@ -217,21 +232,9 @@ SECTIONS
 	BSS_SECTION(0, 0, 0)
 
 	. = ALIGN(PAGE_SIZE);
-	idmap_pg_dir = .;
-	. += IDMAP_DIR_SIZE;
-
-#ifdef CONFIG_UNMAP_KERNEL_AT_EL0
-	tramp_pg_dir = .;
-	. += PAGE_SIZE;
-#endif
-
-#ifdef CONFIG_ARM64_SW_TTBR0_PAN
-	reserved_ttbr0 = .;
-	. += RESERVED_TTBR0_SIZE;
-#endif
-	swapper_pg_dir = .;
-	. += SWAPPER_DIR_SIZE;
-	swapper_pg_end = .;
+	init_pg_dir = .;
+	. += INIT_DIR_SIZE;
+	init_pg_end = .;
 
 	__pecoff_data_size = ABSOLUTE(. - __initdata_begin);
 	_end = .;

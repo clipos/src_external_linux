@@ -25,7 +25,6 @@
 #include <linux/cpu.h>
 
 #include <asm/processor.h>
-#include <asm/traps.h>
 #include <asm/apic.h>
 #include <asm/mce.h>
 #include <asm/msr.h>
@@ -391,7 +390,7 @@ static void unexpected_thermal_interrupt(void)
 
 static void (*smp_thermal_vector)(void) = unexpected_thermal_interrupt;
 
-asmlinkage __visible void __irq_entry smp_thermal_interrupt(struct pt_regs *regs)
+asmlinkage __visible void __irq_entry smp_thermal_interrupt(struct pt_regs *r)
 {
 	entering_irq();
 	trace_thermal_apic_entry(THERMAL_APIC_VECTOR);

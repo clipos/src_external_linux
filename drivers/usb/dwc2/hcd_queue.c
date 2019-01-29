@@ -59,7 +59,7 @@
 #define DWC2_UNRESERVE_DELAY (msecs_to_jiffies(5))
 
 /* If we get a NAK, wait this long before retrying */
-#define DWC2_RETRY_WAIT_DELAY 1*1E6L
+#define DWC2_RETRY_WAIT_DELAY (msecs_to_jiffies(1))
 
 /**
  * dwc2_periodic_channel_available() - Checks that a channel is available for a
@@ -1464,12 +1464,10 @@ static void dwc2_deschedule_periodic(struct dwc2_hsotg *hsotg,
  * qh back to the "inactive" list, then queues transactions.
  *
  * @t: Pointer to wait_timer in a qh.
- *
- * Return: HRTIMER_NORESTART to not automatically restart this timer.
  */
-static enum hrtimer_restart dwc2_wait_timer_fn(struct hrtimer *t)
+static void dwc2_wait_timer_fn(struct timer_list *t)
 {
-	struct dwc2_qh *qh = container_of(t, struct dwc2_qh, wait_timer);
+	struct dwc2_qh *qh = from_timer(qh, t, wait_timer);
 	struct dwc2_hsotg *hsotg = qh->hsotg;
 	unsigned long flags;
 
@@ -1493,7 +1491,6 @@ static enum hrtimer_restart dwc2_wait_timer_fn(struct hrtimer *t)
 	}
 
 	spin_unlock_irqrestore(&hsotg->lock, flags);
-	return HRTIMER_NORESTART;
 }
 
 /**
@@ -1524,8 +1521,7 @@ static void dwc2_qh_init(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh,
 	/* Initialize QH */
 	qh->hsotg = hsotg;
 	timer_setup(&qh->unreserve_timer, dwc2_unreserve_timer_fn, 0);
-	hrtimer_init(&qh->wait_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	qh->wait_timer.function = &dwc2_wait_timer_fn;
+	timer_setup(&qh->wait_timer, dwc2_wait_timer_fn, 0);
 	qh->ep_type = ep_type;
 	qh->ep_is_in = ep_is_in;
 
@@ -1694,7 +1690,7 @@ void dwc2_hcd_qh_free(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
 	 * won't do anything anyway, but we want it to finish before we free
 	 * memory.
 	 */
-	hrtimer_cancel(&qh->wait_timer);
+	del_timer_sync(&qh->wait_timer);
 
 	dwc2_host_put_tt_info(hsotg, qh->dwc_tt);
 
@@ -1720,7 +1716,6 @@ int dwc2_hcd_qh_add(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
 {
 	int status;
 	u32 intr_mask;
-	ktime_t delay;
 
 	if (dbg_qh(qh))
 		dev_vdbg(hsotg->dev, "%s()\n", __func__);
@@ -1739,8 +1734,8 @@ int dwc2_hcd_qh_add(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
 			list_add_tail(&qh->qh_list_entry,
 				      &hsotg->non_periodic_sched_waiting);
 			qh->wait_timer_cancel = false;
-			delay = ktime_set(0, DWC2_RETRY_WAIT_DELAY);
-			hrtimer_start(&qh->wait_timer, delay, HRTIMER_MODE_REL);
+			mod_timer(&qh->wait_timer,
+				  jiffies + DWC2_RETRY_WAIT_DELAY + 1);
 		} else {
 			list_add_tail(&qh->qh_list_entry,
 				      &hsotg->non_periodic_sched_inactive);

@@ -20,7 +20,6 @@
 #include <linux/init.h>
 #include <linux/initrd.h>
 #include <linux/pagemap.h>
-#include <linux/bootmem.h>
 #include <linux/memblock.h>
 #include <linux/proc_fs.h>
 #include <linux/pci.h>
@@ -197,7 +196,7 @@ static __ref void *spp_getpage(void)
 	if (after_bootmem)
 		ptr = (void *) get_zeroed_page(GFP_ATOMIC);
 	else
-		ptr = alloc_bootmem_pages(PAGE_SIZE);
+		ptr = memblock_alloc(PAGE_SIZE, PAGE_SIZE);
 
 	if (!ptr || ((unsigned long)ptr & ~PAGE_MASK)) {
 		panic("set_pte_phys: cannot allocate page data %s\n",
@@ -585,6 +584,7 @@ phys_pud_init(pud_t *pud_page, unsigned long paddr, unsigned long paddr_end,
 							   paddr_end,
 							   page_size_mask,
 							   prot);
+				__flush_tlb_all();
 				continue;
 			}
 			/*
@@ -627,6 +627,7 @@ phys_pud_init(pud_t *pud_page, unsigned long paddr, unsigned long paddr_end,
 		pud_populate(&init_mm, pud, pmd);
 		spin_unlock(&init_mm.page_table_lock);
 	}
+	__flush_tlb_all();
 
 	update_page_count(PG_LEVEL_1G, pages);
 
@@ -667,6 +668,7 @@ phys_p4d_init(p4d_t *p4d_page, unsigned long paddr, unsigned long paddr_end,
 			paddr_last = phys_pud_init(pud, paddr,
 					paddr_end,
 					page_size_mask);
+			__flush_tlb_all();
 			continue;
 		}
 
@@ -678,6 +680,7 @@ phys_p4d_init(p4d_t *p4d_page, unsigned long paddr, unsigned long paddr_end,
 		p4d_populate(&init_mm, p4d, pud);
 		spin_unlock(&init_mm.page_table_lock);
 	}
+	__flush_tlb_all();
 
 	return paddr_last;
 }
@@ -729,6 +732,8 @@ kernel_physical_mapping_init(unsigned long paddr_start,
 
 	if (pgd_changed)
 		sync_global_pgds(vaddr_start, vaddr_end - 1);
+
+	__flush_tlb_all();
 
 	return paddr_last;
 }
@@ -1182,14 +1187,14 @@ void __init mem_init(void)
 	/* clear_bss() already clear the empty_zero_page */
 
 	/* this will put all memory onto the freelists */
-	free_all_bootmem();
+	memblock_free_all();
 	after_bootmem = 1;
 	x86_init.hyper.init_after_bootmem();
 
 	/*
 	 * Must be done after boot memory is put on freelist, because here we
 	 * might set fields in deferred struct pages that have not yet been
-	 * initialized, and free_all_bootmem() initializes all the reserved
+	 * initialized, and memblock_free_all() initializes all the reserved
 	 * deferred pages for us.
 	 */
 	register_page_bootmem_info();
@@ -1201,7 +1206,7 @@ void __init mem_init(void)
 	mem_init_print_info(NULL);
 }
 
-int kernel_set_to_readonly __ro_after_init;
+int kernel_set_to_readonly;
 
 void set_kernel_text_rw(void)
 {
@@ -1250,8 +1255,9 @@ void mark_rodata_ro(void)
 
 	printk(KERN_INFO "Write protecting the kernel read-only data: %luk\n",
 	       (end - start) >> 10);
-	kernel_set_to_readonly = 1;
 	set_memory_ro(start, (end - start) >> PAGE_SHIFT);
+
+	kernel_set_to_readonly = 1;
 
 	/*
 	 * The rodata/data/bss/brk section (but not the kernel text!)

@@ -951,10 +951,9 @@ static int rc_dma_get_range(struct device *dev, u64 *size)
 {
 	struct acpi_iort_node *node;
 	struct acpi_iort_root_complex *rc;
-	struct pci_bus *pbus = to_pci_dev(dev)->bus;
 
 	node = iort_scan_node(ACPI_IORT_NODE_PCI_ROOT_COMPLEX,
-			      iort_match_node_callback, &pbus->dev);
+			      iort_match_node_callback, dev);
 	if (!node || node->revision < 1)
 		return -ENODEV;
 
@@ -1429,7 +1428,7 @@ static int __init iort_add_platform_device(struct acpi_iort_node *node,
 	return 0;
 
 dma_deconfigure:
-	acpi_dma_deconfigure(&pdev->dev);
+	arch_teardown_dma_ops(&pdev->dev);
 dev_put:
 	platform_device_put(pdev);
 

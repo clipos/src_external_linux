@@ -35,15 +35,6 @@
 #define PCI_IO_SIZE		SZ_16M
 
 /*
- * Log2 of the upper bound of the size of a struct page. Used for sizing
- * the vmemmap region only, does not affect actual memory footprint.
- * We don't use sizeof(struct page) directly since taking its size here
- * requires its definition to be available at this point in the inclusion
- * chain, and it may not be a power of 2 in the first place.
- */
-#define STRUCT_PAGE_MAX_SHIFT	6
-
-/*
  * VMEMMAP_SIZE - allows the whole linear region to be covered by
  *                a struct page array
  */
@@ -76,17 +67,12 @@
 /*
  * KASAN requires 1/8th of the kernel virtual address space for the shadow
  * region. KASAN can bloat the stack significantly, so double the (minimum)
- * stack size when KASAN is in use, and then double it again if KASAN_EXTRA is
- * on.
+ * stack size when KASAN is in use.
  */
 #ifdef CONFIG_KASAN
 #define KASAN_SHADOW_SCALE_SHIFT 3
 #define KASAN_SHADOW_SIZE	(UL(1) << (VA_BITS - KASAN_SHADOW_SCALE_SHIFT))
-#ifdef CONFIG_KASAN_EXTRA
-#define KASAN_THREAD_SHIFT	2
-#else
 #define KASAN_THREAD_SHIFT	1
-#endif /* CONFIG_KASAN_EXTRA */
 #else
 #define KASAN_SHADOW_SIZE	(0)
 #define KASAN_THREAD_SHIFT	0

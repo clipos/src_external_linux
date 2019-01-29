@@ -171,7 +171,6 @@ void svc_xprt_init(struct net *net, struct svc_xprt_class *xcl,
 	mutex_init(&xprt->xpt_mutex);
 	spin_lock_init(&xprt->xpt_lock);
 	set_bit(XPT_BUSY, &xprt->xpt_flags);
-	rpc_init_wait_queue(&xprt->xpt_bc_pending, "xpt_bc_pending");
 	xprt->xpt_net = get_net(net);
 	strcpy(xprt->xpt_remotebuf, "uninitialized");
 }
@@ -469,11 +468,10 @@ out:
  */
 void svc_reserve(struct svc_rqst *rqstp, int space)
 {
-	struct svc_xprt *xprt = rqstp->rq_xprt;
-
 	space += rqstp->rq_res.head[0].iov_len;
 
-	if (xprt && space < rqstp->rq_reserved) {
+	if (space < rqstp->rq_reserved) {
+		struct svc_xprt *xprt = rqstp->rq_xprt;
 		atomic_sub((rqstp->rq_reserved - space), &xprt->xpt_reserved);
 		rqstp->rq_reserved = space;
 
@@ -896,7 +894,6 @@ int svc_send(struct svc_rqst *rqstp)
 	else
 		len = xprt->xpt_ops->xpo_sendto(rqstp);
 	mutex_unlock(&xprt->xpt_mutex);
-	rpc_wake_up(&xprt->xpt_bc_pending);
 	trace_svc_send(rqstp, len);
 	svc_xprt_release(rqstp);
 

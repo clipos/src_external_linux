@@ -732,8 +732,7 @@ static int sens_destroy(void *key, void *datum, void *p)
 	kfree(key);
 	if (datum) {
 		levdatum = datum;
-		if (levdatum->level)
-			ebitmap_destroy(&levdatum->level->cat);
+		ebitmap_destroy(&levdatum->level->cat);
 		kfree(levdatum->level);
 	}
 	kfree(datum);
@@ -2109,7 +2108,6 @@ static int ocontext_read(struct policydb *p, struct policydb_compat_info *info,
 {
 	int i, j, rc;
 	u32 nel, len;
-	__be64 prefixbuf[1];
 	__le32 buf[3];
 	struct ocontext *l, *c;
 	u32 nodebuf[8];
@@ -2219,30 +2217,21 @@ static int ocontext_read(struct policydb *p, struct policydb_compat_info *info,
 					goto out;
 				break;
 			}
-			case OCON_IBPKEY: {
-				u32 pkey_lo, pkey_hi;
-
-				rc = next_entry(prefixbuf, fp, sizeof(u64));
+			case OCON_IBPKEY:
+				rc = next_entry(nodebuf, fp, sizeof(u32) * 4);
 				if (rc)
 					goto out;
 
-				/* we need to have subnet_prefix in CPU order */
-				c->u.ibpkey.subnet_prefix = be64_to_cpu(prefixbuf[0]);
+				c->u.ibpkey.subnet_prefix = be64_to_cpu(*((__be64 *)nodebuf));
 
-				rc = next_entry(buf, fp, sizeof(u32) * 2);
-				if (rc)
-					goto out;
-
-				pkey_lo = le32_to_cpu(buf[0]);
-				pkey_hi = le32_to_cpu(buf[1]);
-
-				if (pkey_lo > U16_MAX || pkey_hi > U16_MAX) {
+				if (nodebuf[2] > 0xffff ||
+				    nodebuf[3] > 0xffff) {
 					rc = -EINVAL;
 					goto out;
 				}
 
-				c->u.ibpkey.low_pkey  = pkey_lo;
-				c->u.ibpkey.high_pkey = pkey_hi;
+				c->u.ibpkey.low_pkey = le32_to_cpu(nodebuf[2]);
+				c->u.ibpkey.high_pkey = le32_to_cpu(nodebuf[3]);
 
 				rc = context_read_and_validate(&c->context[0],
 							       p,
@@ -2250,10 +2239,7 @@ static int ocontext_read(struct policydb *p, struct policydb_compat_info *info,
 				if (rc)
 					goto out;
 				break;
-			}
-			case OCON_IBENDPORT: {
-				u32 port;
-
+			case OCON_IBENDPORT:
 				rc = next_entry(buf, fp, sizeof(u32) * 2);
 				if (rc)
 					goto out;
@@ -2263,13 +2249,12 @@ static int ocontext_read(struct policydb *p, struct policydb_compat_info *info,
 				if (rc)
 					goto out;
 
-				port = le32_to_cpu(buf[1]);
-				if (port > U8_MAX || port == 0) {
+				if (buf[1] > 0xff || buf[1] == 0) {
 					rc = -EINVAL;
 					goto out;
 				}
 
-				c->u.ibendport.port = port;
+				c->u.ibendport.port = le32_to_cpu(buf[1]);
 
 				rc = context_read_and_validate(&c->context[0],
 							       p,
@@ -2277,8 +2262,7 @@ static int ocontext_read(struct policydb *p, struct policydb_compat_info *info,
 				if (rc)
 					goto out;
 				break;
-			} /* end case */
-			} /* end switch */
+			}
 		}
 	}
 	rc = 0;
@@ -3121,7 +3105,6 @@ static int ocontext_write(struct policydb *p, struct policydb_compat_info *info,
 {
 	unsigned int i, j, rc;
 	size_t nel, len;
-	__be64 prefixbuf[1];
 	__le32 buf[3];
 	u32 nodebuf[8];
 	struct ocontext *c;
@@ -3209,17 +3192,12 @@ static int ocontext_write(struct policydb *p, struct policydb_compat_info *info,
 					return rc;
 				break;
 			case OCON_IBPKEY:
-				/* subnet_prefix is in CPU order */
-				prefixbuf[0] = cpu_to_be64(c->u.ibpkey.subnet_prefix);
+				*((__be64 *)nodebuf) = cpu_to_be64(c->u.ibpkey.subnet_prefix);
 
-				rc = put_entry(prefixbuf, sizeof(u64), 1, fp);
-				if (rc)
-					return rc;
+				nodebuf[2] = cpu_to_le32(c->u.ibpkey.low_pkey);
+				nodebuf[3] = cpu_to_le32(c->u.ibpkey.high_pkey);
 
-				buf[0] = cpu_to_le32(c->u.ibpkey.low_pkey);
-				buf[1] = cpu_to_le32(c->u.ibpkey.high_pkey);
-
-				rc = put_entry(buf, sizeof(u32), 2, fp);
+				rc = put_entry(nodebuf, sizeof(u32), 4, fp);
 				if (rc)
 					return rc;
 				rc = context_write(p, &c->context[0], fp);

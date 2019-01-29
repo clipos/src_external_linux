@@ -96,7 +96,7 @@ aflags-$(CONFIG_CPU_BIG_ENDIAN)		+= $(call cc-option,-mabi=elfv1)
 aflags-$(CONFIG_CPU_LITTLE_ENDIAN)	+= -mabi=elfv2
 endif
 
-ifneq ($(cc-name),clang)
+ifndef CONFIG_CC_IS_CLANG
   cflags-$(CONFIG_CPU_LITTLE_ENDIAN)	+= -mno-strict-align
 endif
 
@@ -110,6 +110,13 @@ KBUILD_CFLAGS	+= -m$(BITS)
 KBUILD_AFLAGS	+= -m$(BITS) -Wl,-a$(BITS)
 KBUILD_LDFLAGS	+= -m elf$(BITS)$(LDEMULATION)
 KBUILD_ARFLAGS	+= --target=elf$(BITS)-$(GNUTARGET)
+endif
+
+cflags-$(CONFIG_STACKPROTECTOR)	+= -mstack-protector-guard=tls
+ifdef CONFIG_PPC64
+cflags-$(CONFIG_STACKPROTECTOR)	+= -mstack-protector-guard-reg=r13
+else
+cflags-$(CONFIG_STACKPROTECTOR)	+= -mstack-protector-guard-reg=r2
 endif
 
 LDFLAGS_vmlinux-y := -Bstatic
@@ -168,7 +175,7 @@ endif
 # Work around gcc code-gen bugs with -pg / -fno-omit-frame-pointer in gcc <= 4.8
 # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=44199
 # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=52828
-ifneq ($(cc-name),clang)
+ifndef CONFIG_CC_IS_CLANG
 CC_FLAGS_FTRACE	+= $(call cc-ifversion, -lt, 0409, -mno-sched-epilog)
 endif
 endif
@@ -266,18 +273,8 @@ head-$(CONFIG_PPC_FPU)		+= arch/powerpc/kernel/fpu.o
 head-$(CONFIG_ALTIVEC)		+= arch/powerpc/kernel/vector.o
 head-$(CONFIG_PPC_OF_BOOT_TRAMPOLINE)  += arch/powerpc/kernel/prom_init.o
 
-core-y				+= arch/powerpc/kernel/ \
-				   arch/powerpc/mm/ \
-				   arch/powerpc/lib/ \
-				   arch/powerpc/sysdev/ \
-				   arch/powerpc/platforms/ \
-				   arch/powerpc/math-emu/ \
-				   arch/powerpc/crypto/ \
-				   arch/powerpc/net/
-core-$(CONFIG_XMON)		+= arch/powerpc/xmon/
-core-$(CONFIG_KVM) 		+= arch/powerpc/kvm/
-core-$(CONFIG_PERF_EVENTS)	+= arch/powerpc/perf/
-core-$(CONFIG_KEXEC_FILE)	+= arch/powerpc/purgatory/
+# See arch/powerpc/Kbuild for content of core part of the kernel
+core-y += arch/powerpc/
 
 drivers-$(CONFIG_OPROFILE)	+= arch/powerpc/oprofile/
 
@@ -299,9 +296,6 @@ $(BOOT_TARGETS2): vmlinux
 
 
 bootwrapper_install:
-	$(Q)$(MAKE) $(build)=$(boot) $(patsubst %,$(boot)/%,$@)
-
-%.dtb: scripts
 	$(Q)$(MAKE) $(build)=$(boot) $(patsubst %,$(boot)/%,$@)
 
 # Used to create 'merged defconfigs'
@@ -408,9 +402,16 @@ archclean:
 
 archprepare: checkbin
 
-# Use the file '.tmp_gas_check' for binutils tests, as gas won't output
-# to stdout and these checks are run even on install targets.
-TOUT	:= .tmp_gas_check
+ifdef CONFIG_STACKPROTECTOR
+prepare: stack_protector_prepare
+
+stack_protector_prepare: prepare0
+ifdef CONFIG_PPC64
+	$(eval KBUILD_CFLAGS += -mstack-protector-guard-offset=$(shell awk '{if ($$2 == "PACA_CANARY") print $$3;}' include/generated/asm-offsets.h))
+else
+	$(eval KBUILD_CFLAGS += -mstack-protector-guard-offset=$(shell awk '{if ($$2 == "TASK_CANARY") print $$3;}' include/generated/asm-offsets.h))
+endif
+endif
 
 # Check toolchain versions:
 # - gcc-4.6 is the minimum kernel-wide version so nothing required.
@@ -422,7 +423,3 @@ checkbin:
 		echo -n '*** Please use a different binutils version.' ; \
 		false ; \
 	fi
-
-
-CLEAN_FILES += $(TOUT)
-

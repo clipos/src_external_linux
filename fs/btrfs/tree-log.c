@@ -205,14 +205,11 @@ static int join_running_log_trans(struct btrfs_root *root)
  * until you call btrfs_end_log_trans() or it makes any future
  * log transactions wait until you call btrfs_end_log_trans()
  */
-int btrfs_pin_log_trans(struct btrfs_root *root)
+void btrfs_pin_log_trans(struct btrfs_root *root)
 {
-	int ret = -ENOENT;
-
 	mutex_lock(&root->log_mutex);
 	atomic_inc(&root->log_writers);
 	mutex_unlock(&root->log_mutex);
-	return ret;
 }
 
 /*
@@ -5779,22 +5776,6 @@ static int btrfs_log_inode_parent(struct btrfs_trans_handle *trans,
 		ret = btrfs_log_all_parents(trans, orig_inode, ctx);
 		if (ret)
 			goto end_trans;
-	}
-
-	/*
-	 * If a new hard link was added to the inode in the current transaction
-	 * and its link count is now greater than 1, we need to fallback to a
-	 * transaction commit, otherwise we can end up not logging all its new
-	 * parents for all the hard links. Here just from the dentry used to
-	 * fsync, we can not visit the ancestor inodes for all the other hard
-	 * links to figure out if any is new, so we fallback to a transaction
-	 * commit (instead of adding a lot of complexity of scanning a btree,
-	 * since this scenario is not a common use case).
-	 */
-	if (inode->vfs_inode.i_nlink > 1 &&
-	    inode->last_link_trans > last_committed) {
-		ret = -EMLINK;
-		goto end_trans;
 	}
 
 	while (1) {

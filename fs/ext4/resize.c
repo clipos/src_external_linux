@@ -127,12 +127,10 @@ static int verify_group_input(struct super_block *sb,
 	else if (free_blocks_count < 0)
 		ext4_warning(sb, "Bad blocks count %u",
 			     input->blocks_count);
-	else if (IS_ERR(bh = ext4_sb_bread(sb, end - 1, 0))) {
-		err = PTR_ERR(bh);
-		bh = NULL;
+	else if (!(bh = sb_bread(sb, end - 1)))
 		ext4_warning(sb, "Cannot read last block (%llu)",
 			     end - 1);
-	} else if (outside(input->block_bitmap, start, end))
+	else if (outside(input->block_bitmap, start, end))
 		ext4_warning(sb, "Block bitmap not in group (block %llu)",
 			     (unsigned long long)input->block_bitmap);
 	else if (outside(input->inode_bitmap, start, end))
@@ -783,11 +781,11 @@ static int add_new_gdb(handle_t *handle, struct inode *inode,
 	struct ext4_super_block *es = EXT4_SB(sb)->s_es;
 	unsigned long gdb_num = group / EXT4_DESC_PER_BLOCK(sb);
 	ext4_fsblk_t gdblock = EXT4_SB(sb)->s_sbh->b_blocknr + 1 + gdb_num;
-	struct buffer_head **o_group_desc, **n_group_desc = NULL;
-	struct buffer_head *dind = NULL;
-	struct buffer_head *gdb_bh = NULL;
+	struct buffer_head **o_group_desc, **n_group_desc;
+	struct buffer_head *dind;
+	struct buffer_head *gdb_bh;
 	int gdbackups;
-	struct ext4_iloc iloc = { .bh = NULL };
+	struct ext4_iloc iloc;
 	__le32 *data;
 	int err;
 
@@ -796,22 +794,21 @@ static int add_new_gdb(handle_t *handle, struct inode *inode,
 		       "EXT4-fs: ext4_add_new_gdb: adding group block %lu\n",
 		       gdb_num);
 
-	gdb_bh = ext4_sb_bread(sb, gdblock, 0);
-	if (IS_ERR(gdb_bh))
-		return PTR_ERR(gdb_bh);
+	gdb_bh = sb_bread(sb, gdblock);
+	if (!gdb_bh)
+		return -EIO;
 
 	gdbackups = verify_reserved_gdb(sb, group, gdb_bh);
 	if (gdbackups < 0) {
 		err = gdbackups;
-		goto errout;
+		goto exit_bh;
 	}
 
 	data = EXT4_I(inode)->i_data + EXT4_DIND_BLOCK;
-	dind = ext4_sb_bread(sb, le32_to_cpu(*data), 0);
-	if (IS_ERR(dind)) {
-		err = PTR_ERR(dind);
-		dind = NULL;
-		goto errout;
+	dind = sb_bread(sb, le32_to_cpu(*data));
+	if (!dind) {
+		err = -EIO;
+		goto exit_bh;
 	}
 
 	data = (__le32 *)dind->b_data;
@@ -819,18 +816,18 @@ static int add_new_gdb(handle_t *handle, struct inode *inode,
 		ext4_warning(sb, "new group %u GDT block %llu not reserved",
 			     group, gdblock);
 		err = -EINVAL;
-		goto errout;
+		goto exit_dind;
 	}
 
 	BUFFER_TRACE(EXT4_SB(sb)->s_sbh, "get_write_access");
 	err = ext4_journal_get_write_access(handle, EXT4_SB(sb)->s_sbh);
 	if (unlikely(err))
-		goto errout;
+		goto exit_dind;
 
 	BUFFER_TRACE(gdb_bh, "get_write_access");
 	err = ext4_journal_get_write_access(handle, gdb_bh);
 	if (unlikely(err))
-		goto errout;
+		goto exit_dind;
 
 	BUFFER_TRACE(dind, "get_write_access");
 	err = ext4_journal_get_write_access(handle, dind);
@@ -840,7 +837,7 @@ static int add_new_gdb(handle_t *handle, struct inode *inode,
 	/* ext4_reserve_inode_write() gets a reference on the iloc */
 	err = ext4_reserve_inode_write(handle, inode, &iloc);
 	if (unlikely(err))
-		goto errout;
+		goto exit_dind;
 
 	n_group_desc = ext4_kvmalloc((gdb_num + 1) *
 				     sizeof(struct buffer_head *),
@@ -849,7 +846,7 @@ static int add_new_gdb(handle_t *handle, struct inode *inode,
 		err = -ENOMEM;
 		ext4_warning(sb, "not enough memory for %lu groups",
 			     gdb_num + 1);
-		goto errout;
+		goto exit_inode;
 	}
 
 	/*
@@ -865,7 +862,7 @@ static int add_new_gdb(handle_t *handle, struct inode *inode,
 	err = ext4_handle_dirty_metadata(handle, NULL, dind);
 	if (unlikely(err)) {
 		ext4_std_error(sb, err);
-		goto errout;
+		goto exit_inode;
 	}
 	inode->i_blocks -= (gdbackups + 1) * sb->s_blocksize >>
 			   (9 - EXT4_SB(sb)->s_cluster_bits);
@@ -874,7 +871,8 @@ static int add_new_gdb(handle_t *handle, struct inode *inode,
 	err = ext4_handle_dirty_metadata(handle, NULL, gdb_bh);
 	if (unlikely(err)) {
 		ext4_std_error(sb, err);
-		goto errout;
+		iloc.bh = NULL;
+		goto exit_inode;
 	}
 	brelse(dind);
 
@@ -890,11 +888,15 @@ static int add_new_gdb(handle_t *handle, struct inode *inode,
 	err = ext4_handle_dirty_super(handle, sb);
 	if (err)
 		ext4_std_error(sb, err);
+
 	return err;
-errout:
+
+exit_inode:
 	kvfree(n_group_desc);
 	brelse(iloc.bh);
+exit_dind:
 	brelse(dind);
+exit_bh:
 	brelse(gdb_bh);
 
 	ext4_debug("leaving with error %d\n", err);
@@ -914,9 +916,9 @@ static int add_new_gdb_meta_bg(struct super_block *sb,
 
 	gdblock = ext4_meta_bg_first_block_no(sb, group) +
 		   ext4_bg_has_super(sb, group);
-	gdb_bh = ext4_sb_bread(sb, gdblock, 0);
-	if (IS_ERR(gdb_bh))
-		return PTR_ERR(gdb_bh);
+	gdb_bh = sb_bread(sb, gdblock);
+	if (!gdb_bh)
+		return -EIO;
 	n_group_desc = ext4_kvmalloc((gdb_num + 1) *
 				     sizeof(struct buffer_head *),
 				     GFP_NOFS);
@@ -973,10 +975,9 @@ static int reserve_backup_gdb(handle_t *handle, struct inode *inode,
 		return -ENOMEM;
 
 	data = EXT4_I(inode)->i_data + EXT4_DIND_BLOCK;
-	dind = ext4_sb_bread(sb, le32_to_cpu(*data), 0);
-	if (IS_ERR(dind)) {
-		err = PTR_ERR(dind);
-		dind = NULL;
+	dind = sb_bread(sb, le32_to_cpu(*data));
+	if (!dind) {
+		err = -EIO;
 		goto exit_free;
 	}
 
@@ -995,10 +996,9 @@ static int reserve_backup_gdb(handle_t *handle, struct inode *inode,
 			err = -EINVAL;
 			goto exit_bh;
 		}
-		primary[res] = ext4_sb_bread(sb, blk, 0);
-		if (IS_ERR(primary[res])) {
-			err = PTR_ERR(primary[res]);
-			primary[res] = NULL;
+		primary[res] = sb_bread(sb, blk);
+		if (!primary[res]) {
+			err = -EIO;
 			goto exit_bh;
 		}
 		gdbackups = verify_reserved_gdb(sb, group, primary[res]);
@@ -1631,13 +1631,13 @@ int ext4_group_add(struct super_block *sb, struct ext4_new_group_data *input)
 	}
 
 	if (reserved_gdb || gdb_off == 0) {
-		if (!ext4_has_feature_resize_inode(sb) ||
+		if (ext4_has_feature_resize_inode(sb) ||
 		    !le16_to_cpu(es->s_reserved_gdt_blocks)) {
 			ext4_warning(sb,
 				     "No reserved GDT blocks, can't resize");
 			return -EPERM;
 		}
-		inode = ext4_iget(sb, EXT4_RESIZE_INO, EXT4_IGET_SPECIAL);
+		inode = ext4_iget(sb, EXT4_RESIZE_INO);
 		if (IS_ERR(inode)) {
 			ext4_warning(sb, "Error opening resize inode");
 			return PTR_ERR(inode);
@@ -1965,8 +1965,7 @@ retry:
 		}
 
 		if (!resize_inode)
-			resize_inode = ext4_iget(sb, EXT4_RESIZE_INO,
-						 EXT4_IGET_SPECIAL);
+			resize_inode = ext4_iget(sb, EXT4_RESIZE_INO);
 		if (IS_ERR(resize_inode)) {
 			ext4_warning(sb, "Error opening resize inode");
 			return PTR_ERR(resize_inode);

@@ -726,7 +726,7 @@ int ip6_fragment(struct net *net, struct sock *sk, struct sk_buff *skb,
 
 			skb = frag;
 			frag = skb->next;
-			skb->next = NULL;
+			skb_mark_not_on_list(skb);
 		}
 
 		kfree(tmp_hdr);
@@ -1355,7 +1355,7 @@ emsgsize:
 			unsigned int fraglen;
 			unsigned int fraggap;
 			unsigned int alloclen;
-			unsigned int pagedlen = 0;
+			unsigned int pagedlen;
 alloc_new_skb:
 			/* There's no room in the current skb */
 			if (skb)
@@ -1379,6 +1379,7 @@ alloc_new_skb:
 			if (datalen > (cork->length <= mtu && !(cork->flags & IPCORK_ALLFRAG) ? mtu : maxfraglen) - fragheaderlen)
 				datalen = maxfraglen - fragheaderlen - rt->dst.trailer_len;
 			fraglen = datalen + fragheaderlen;
+			pagedlen = 0;
 
 			if ((flags & MSG_MORE) &&
 			    !(rt->dst.dev->features&NETIF_F_SG))

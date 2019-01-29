@@ -1649,6 +1649,14 @@ brcmf_set_key_mgmt(struct net_device *ndev, struct cfg80211_connect_params *sme)
 		case WLAN_AKM_SUITE_PSK:
 			val = WPA2_AUTH_PSK;
 			break;
+		case WLAN_AKM_SUITE_FT_8021X:
+			val = WPA2_AUTH_UNSPECIFIED | WPA2_AUTH_FT;
+			if (sme->want_1x)
+				profile->use_fwsup = BRCMF_PROFILE_FWSUP_1X;
+			break;
+		case WLAN_AKM_SUITE_FT_PSK:
+			val = WPA2_AUTH_PSK | WPA2_AUTH_FT;
+			break;
 		default:
 			brcmf_err("invalid cipher group (%d)\n",
 				  sme->crypto.cipher_group);
@@ -5188,17 +5196,10 @@ static struct cfg80211_ops brcmf_cfg80211_ops = {
 	.del_pmk = brcmf_cfg80211_del_pmk,
 };
 
-struct cfg80211_ops *brcmf_cfg80211_get_ops(struct brcmf_mp_device *settings)
+struct cfg80211_ops *brcmf_cfg80211_get_ops(void)
 {
-	struct cfg80211_ops *ops;
-
-	ops = kmemdup(&brcmf_cfg80211_ops, sizeof(brcmf_cfg80211_ops),
+	return kmemdup(&brcmf_cfg80211_ops, sizeof(brcmf_cfg80211_ops),
 		       GFP_KERNEL);
-
-	if (ops && settings->roamoff)
-		ops->update_connect_params = NULL;
-
-	return ops;
 }
 
 struct brcmf_cfg80211_vif *brcmf_alloc_vif(struct brcmf_cfg80211_info *cfg,

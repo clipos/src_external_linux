@@ -2234,8 +2234,10 @@ static struct pxafb_mach_info *of_pxafb_of_mach_info(struct device *dev)
 	if (!info)
 		return ERR_PTR(-ENOMEM);
 	ret = of_get_pxafb_mode_info(dev, info);
-	if (ret)
+	if (ret) {
+		kfree(info->modes);
 		return ERR_PTR(ret);
+	}
 
 	/*
 	 * On purpose, neither lccrX registers nor video memory size can be

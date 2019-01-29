@@ -13,15 +13,16 @@
 #include <asm/thread_info.h>
 #include <asm/unistd.h>
 
-long compat_arm_syscall(struct pt_regs *regs, int scno);
+long compat_arm_syscall(struct pt_regs *regs);
+
 long sys_ni_syscall(void);
 
-static long do_ni_syscall(struct pt_regs *regs, int scno)
+asmlinkage long do_ni_syscall(struct pt_regs *regs)
 {
 #ifdef CONFIG_COMPAT
 	long ret;
 	if (is_compat_task()) {
-		ret = compat_arm_syscall(regs, scno);
+		ret = compat_arm_syscall(regs);
 		if (ret != -ENOSYS)
 			return ret;
 	}
@@ -46,7 +47,7 @@ static void invoke_syscall(struct pt_regs *regs, unsigned int scno,
 		syscall_fn = syscall_table[array_index_nospec(scno, sc_nr)];
 		ret = __invoke_syscall(regs, syscall_fn);
 	} else {
-		ret = do_ni_syscall(regs, scno);
+		ret = do_ni_syscall(regs);
 	}
 
 	regs->regs[0] = ret;

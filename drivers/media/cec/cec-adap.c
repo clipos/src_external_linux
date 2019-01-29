@@ -62,6 +62,19 @@ static unsigned int cec_log_addr2dev(const struct cec_adapter *adap, u8 log_addr
 	return adap->log_addrs.primary_device_type[i < 0 ? 0 : i];
 }
 
+u16 cec_get_edid_phys_addr(const u8 *edid, unsigned int size,
+			   unsigned int *offset)
+{
+	unsigned int loc = cec_get_edid_spa_location(edid, size);
+
+	if (offset)
+		*offset = loc;
+	if (loc == 0)
+		return CEC_PHYS_ADDR_INVALID;
+	return (edid[loc] << 8) | edid[loc + 1];
+}
+EXPORT_SYMBOL_GPL(cec_get_edid_phys_addr);
+
 /*
  * Queue a new event for this filehandle. If ts == 0, then set it
  * to the current time.
@@ -442,7 +455,7 @@ int cec_thread_func(void *_adap)
 				(adap->needs_hpd &&
 				 (!adap->is_configured && !adap->is_configuring)) ||
 				kthread_should_stop() ||
-				(!adap->transmit_in_progress &&
+				(!adap->transmitting &&
 				 !list_empty(&adap->transmit_queue)),
 				msecs_to_jiffies(CEC_XFER_TIMEOUT_MS));
 			timeout = err == 0;
@@ -450,7 +463,7 @@ int cec_thread_func(void *_adap)
 			/* Otherwise we just wait for something to happen. */
 			wait_event_interruptible(adap->kthread_waitq,
 				kthread_should_stop() ||
-				(!adap->transmit_in_progress &&
+				(!adap->transmitting &&
 				 !list_empty(&adap->transmit_queue)));
 		}
 
@@ -475,7 +488,6 @@ int cec_thread_func(void *_adap)
 			pr_warn("cec-%s: message %*ph timed out\n", adap->name,
 				adap->transmitting->msg.len,
 				adap->transmitting->msg.msg);
-			adap->transmit_in_progress = false;
 			adap->tx_timeouts++;
 			/* Just give up on this. */
 			cec_data_cancel(adap->transmitting,
@@ -487,7 +499,7 @@ int cec_thread_func(void *_adap)
 		 * If we are still transmitting, or there is nothing new to
 		 * transmit, then just continue waiting.
 		 */
-		if (adap->transmit_in_progress || list_empty(&adap->transmit_queue))
+		if (adap->transmitting || list_empty(&adap->transmit_queue))
 			goto unlock;
 
 		/* Get a new message to transmit */
@@ -533,8 +545,6 @@ int cec_thread_func(void *_adap)
 		if (adap->ops->adap_transmit(adap, data->attempts,
 					     signal_free_time, &data->msg))
 			cec_data_cancel(data, CEC_TX_STATUS_ABORTED);
-		else
-			adap->transmit_in_progress = true;
 
 unlock:
 		mutex_unlock(&adap->lock);
@@ -565,17 +575,14 @@ void cec_transmit_done_ts(struct cec_adapter *adap, u8 status,
 	data = adap->transmitting;
 	if (!data) {
 		/*
-		 * This might happen if a transmit was issued and the cable is
+		 * This can happen if a transmit was issued and the cable is
 		 * unplugged while the transmit is ongoing. Ignore this
 		 * transmit in that case.
 		 */
-		if (!adap->transmit_in_progress)
-			dprintk(1, "%s was called without an ongoing transmit!\n",
-				__func__);
-		adap->transmit_in_progress = false;
-		goto wake_thread;
+		dprintk(1, "%s was called without an ongoing transmit!\n",
+			__func__);
+		goto unlock;
 	}
-	adap->transmit_in_progress = false;
 
 	msg = &data->msg;
 
@@ -641,6 +648,7 @@ wake_thread:
 	 * for transmitting or to retry the current message.
 	 */
 	wake_up_interruptible(&adap->kthread_waitq);
+unlock:
 	mutex_unlock(&adap->lock);
 }
 EXPORT_SYMBOL_GPL(cec_transmit_done_ts);
@@ -799,7 +807,7 @@ int cec_transmit_msg_fh(struct cec_adapter *adap, struct cec_msg *msg,
 	}
 
 	if (adap->transmit_queue_sz >= CEC_MAX_MSG_TX_QUEUE_SZ) {
-		dprintk(1, "%s: transmit queue full\n", __func__);
+		dprintk(2, "%s: transmit queue full\n", __func__);
 		return -EBUSY;
 	}
 
@@ -1488,11 +1496,8 @@ void __cec_s_phys_addr(struct cec_adapter *adap, u16 phys_addr, bool block)
 		if (adap->monitor_all_cnt)
 			WARN_ON(call_op(adap, adap_monitor_all_enable, false));
 		mutex_lock(&adap->devnode.lock);
-		if (adap->needs_hpd || list_empty(&adap->devnode.fhs)) {
+		if (adap->needs_hpd || list_empty(&adap->devnode.fhs))
 			WARN_ON(adap->ops->adap_enable(adap, false));
-			adap->transmit_in_progress = false;
-			wake_up_interruptible(&adap->kthread_waitq);
-		}
 		mutex_unlock(&adap->devnode.lock);
 		if (phys_addr == CEC_PHYS_ADDR_INVALID)
 			return;
@@ -1500,7 +1505,6 @@ void __cec_s_phys_addr(struct cec_adapter *adap, u16 phys_addr, bool block)
 
 	mutex_lock(&adap->devnode.lock);
 	adap->last_initiator = 0xff;
-	adap->transmit_in_progress = false;
 
 	if ((adap->needs_hpd || list_empty(&adap->devnode.fhs)) &&
 	    adap->ops->adap_enable(adap, true)) {

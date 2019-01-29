@@ -637,7 +637,7 @@ static struct sk_buff *prepare_ack_packet(struct rxe_qp *qp,
 	if (ack->mask & RXE_ATMACK_MASK)
 		atmack_set_orig(ack, qp->resp.atomic_orig);
 
-	err = rxe_prepare(rxe, ack, skb, &crc);
+	err = rxe_prepare(ack, skb, &crc);
 	if (err) {
 		kfree_skb(skb);
 		return NULL;
@@ -844,16 +844,11 @@ static enum resp_states do_complete(struct rxe_qp *qp,
 
 	memset(&cqe, 0, sizeof(cqe));
 
-	if (qp->rcq->is_user) {
-		uwc->status             = qp->resp.status;
-		uwc->qp_num             = qp->ibqp.qp_num;
-		uwc->wr_id              = wqe->wr_id;
-	} else {
-		wc->status              = qp->resp.status;
-		wc->qp                  = &qp->ibqp;
-		wc->wr_id               = wqe->wr_id;
-	}
+	wc->wr_id		= wqe->wr_id;
+	wc->status		= qp->resp.status;
+	wc->qp			= &qp->ibqp;
 
+	/* fields after status are not required for errors */
 	if (wc->status == IB_WC_SUCCESS) {
 		wc->opcode = (pkt->mask & RXE_IMMDT_MASK &&
 				pkt->mask & RXE_WRITE_MASK) ?

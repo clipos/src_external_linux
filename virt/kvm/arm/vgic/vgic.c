@@ -103,13 +103,13 @@ struct vgic_irq *vgic_get_irq(struct kvm *kvm, struct kvm_vcpu *vcpu,
 {
 	/* SGIs and PPIs */
 	if (intid <= VGIC_MAX_PRIVATE) {
-		intid = array_index_nospec(intid, VGIC_MAX_PRIVATE + 1);
+		intid = array_index_nospec(intid, VGIC_MAX_PRIVATE);
 		return &vcpu->arch.vgic_cpu.private_irqs[intid];
 	}
 
 	/* SPIs */
-	if (intid < (kvm->arch.vgic.nr_spis + VGIC_NR_PRIVATE_IRQS)) {
-		intid = array_index_nospec(intid, kvm->arch.vgic.nr_spis + VGIC_NR_PRIVATE_IRQS);
+	if (intid <= VGIC_MAX_SPI) {
+		intid = array_index_nospec(intid, VGIC_MAX_SPI);
 		return &kvm->arch.vgic.spis[intid - VGIC_NR_PRIVATE_IRQS];
 	}
 

@@ -1708,6 +1708,7 @@ int machine__process_fork_event(struct machine *machine, union perf_event *event
 	struct thread *parent = machine__findnew_thread(machine,
 							event->fork.ppid,
 							event->fork.ptid);
+	bool do_maps_clone = true;
 	int err = 0;
 
 	if (dump_trace)
@@ -1736,9 +1737,25 @@ int machine__process_fork_event(struct machine *machine, union perf_event *event
 
 	thread = machine__findnew_thread(machine, event->fork.pid,
 					 event->fork.tid);
+	/*
+	 * When synthesizing FORK events, we are trying to create thread
+	 * objects for the already running tasks on the machine.
+	 *
+	 * Normally, for a kernel FORK event, we want to clone the parent's
+	 * maps because that is what the kernel just did.
+	 *
+	 * But when synthesizing, this should not be done.  If we do, we end up
+	 * with overlapping maps as we process the sythesized MMAP2 events that
+	 * get delivered shortly thereafter.
+	 *
+	 * Use the FORK event misc flags in an internal way to signal this
+	 * situation, so we can elide the map clone when appropriate.
+	 */
+	if (event->fork.header.misc & PERF_RECORD_MISC_FORK_EXEC)
+		do_maps_clone = false;
 
 	if (thread == NULL || parent == NULL ||
-	    thread__fork(thread, parent, sample->time) < 0) {
+	    thread__fork(thread, parent, sample->time, do_maps_clone) < 0) {
 		dump_printf("problem processing PERF_RECORD_FORK, skipping event.\n");
 		err = -1;
 	}
@@ -2573,33 +2590,6 @@ int machine__get_kernel_start(struct machine *machine)
 			machine->kernel_start = map->start;
 	}
 	return err;
-}
-
-u8 machine__addr_cpumode(struct machine *machine, u8 cpumode, u64 addr)
-{
-	u8 addr_cpumode = cpumode;
-	bool kernel_ip;
-
-	if (!machine->single_address_space)
-		goto out;
-
-	kernel_ip = machine__kernel_ip(machine, addr);
-	switch (cpumode) {
-	case PERF_RECORD_MISC_KERNEL:
-	case PERF_RECORD_MISC_USER:
-		addr_cpumode = kernel_ip ? PERF_RECORD_MISC_KERNEL :
-					   PERF_RECORD_MISC_USER;
-		break;
-	case PERF_RECORD_MISC_GUEST_KERNEL:
-	case PERF_RECORD_MISC_GUEST_USER:
-		addr_cpumode = kernel_ip ? PERF_RECORD_MISC_GUEST_KERNEL :
-					   PERF_RECORD_MISC_GUEST_USER;
-		break;
-	default:
-		break;
-	}
-out:
-	return addr_cpumode;
 }
 
 struct dso *machine__findnew_dso(struct machine *machine, const char *filename)

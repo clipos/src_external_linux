@@ -122,10 +122,10 @@ smb2_unlock_range(struct cifsFileInfo *cfile, struct file_lock *flock,
 
 	/*
 	 * Accessing maxBuf is racy with cifs_reconnect - need to store value
-	 * and check it before using.
+	 * and check it for zero before using.
 	 */
 	max_buf = tcon->ses->server->maxBuf;
-	if (max_buf < sizeof(struct smb2_lock_element))
+	if (!max_buf)
 		return -EINVAL;
 
 	max_num = max_buf / sizeof(struct smb2_lock_element);

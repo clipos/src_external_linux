@@ -105,7 +105,7 @@ static int uvd_v5_0_sw_init(void *handle)
 	int r;
 
 	/* UVD TRAP */
-	r = amdgpu_irq_add_id(adev, AMDGPU_IH_CLIENTID_LEGACY, VISLANDS30_IV_SRCID_UVD_SYSTEM_MESSAGE, &adev->uvd.inst->irq);
+	r = amdgpu_irq_add_id(adev, AMDGPU_IRQ_CLIENTID_LEGACY, VISLANDS30_IV_SRCID_UVD_SYSTEM_MESSAGE, &adev->uvd.inst->irq);
 	if (r)
 		return r;
 
@@ -113,13 +113,13 @@ static int uvd_v5_0_sw_init(void *handle)
 	if (r)
 		return r;
 
-	ring = &adev->uvd.inst->ring;
-	sprintf(ring->name, "uvd");
-	r = amdgpu_ring_init(adev, ring, 512, &adev->uvd.inst->irq, 0);
+	r = amdgpu_uvd_resume(adev);
 	if (r)
 		return r;
 
-	r = amdgpu_uvd_resume(adev);
+	ring = &adev->uvd.inst->ring;
+	sprintf(ring->name, "uvd");
+	r = amdgpu_ring_init(adev, ring, 512, &adev->uvd.inst->irq, 0);
 	if (r)
 		return r;
 

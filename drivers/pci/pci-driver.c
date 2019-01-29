@@ -1251,29 +1251,30 @@ static int pci_pm_runtime_suspend(struct device *dev)
 		return 0;
 	}
 
+	if (!pm || !pm->runtime_suspend)
+		return -ENOSYS;
+
 	pci_dev->state_saved = false;
-	if (pm && pm->runtime_suspend) {
-		error = pm->runtime_suspend(dev);
+	error = pm->runtime_suspend(dev);
+	if (error) {
 		/*
 		 * -EBUSY and -EAGAIN is used to request the runtime PM core
 		 * to schedule a new suspend, so log the event only with debug
 		 * log level.
 		 */
-		if (error == -EBUSY || error == -EAGAIN) {
+		if (error == -EBUSY || error == -EAGAIN)
 			dev_dbg(dev, "can't suspend now (%pf returned %d)\n",
 				pm->runtime_suspend, error);
-			return error;
-		} else if (error) {
+		else
 			dev_err(dev, "can't suspend (%pf returned %d)\n",
 				pm->runtime_suspend, error);
-			return error;
-		}
+
+		return error;
 	}
 
 	pci_fixup_device(pci_fixup_suspend, pci_dev);
 
-	if (pm && pm->runtime_suspend
-	    && !pci_dev->state_saved && pci_dev->current_state != PCI_D0
+	if (!pci_dev->state_saved && pci_dev->current_state != PCI_D0
 	    && pci_dev->current_state != PCI_UNKNOWN) {
 		WARN_ONCE(pci_dev->current_state != prev,
 			"PCI PM: State of device not saved by %pF\n",
@@ -1291,7 +1292,7 @@ static int pci_pm_runtime_suspend(struct device *dev)
 
 static int pci_pm_runtime_resume(struct device *dev)
 {
-	int rc = 0;
+	int rc;
 	struct pci_dev *pci_dev = to_pci_dev(dev);
 	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
 
@@ -1305,12 +1306,14 @@ static int pci_pm_runtime_resume(struct device *dev)
 	if (!pci_dev->driver)
 		return 0;
 
+	if (!pm || !pm->runtime_resume)
+		return -ENOSYS;
+
 	pci_fixup_device(pci_fixup_resume_early, pci_dev);
 	pci_enable_wake(pci_dev, PCI_D0, false);
 	pci_fixup_device(pci_fixup_resume, pci_dev);
 
-	if (pm && pm->runtime_resume)
-		rc = pm->runtime_resume(dev);
+	rc = pm->runtime_resume(dev);
 
 	pci_dev->runtime_d3cold = false;
 

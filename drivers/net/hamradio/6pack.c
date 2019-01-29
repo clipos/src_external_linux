@@ -34,7 +34,6 @@
 #include <linux/ip.h>
 #include <linux/tcp.h>
 #include <linux/semaphore.h>
-#include <linux/compat.h>
 #include <linux/refcount.h>
 
 #define SIXPACK_VERSION    "Revision: 0.3.0"
@@ -524,7 +523,10 @@ static void resync_tnc(struct timer_list *t)
 
 
 	/* Start resync timer again -- the TNC might be still absent */
-	mod_timer(&sp->resync_t, jiffies + SIXP_RESYNC_TIMEOUT);
+
+	del_timer(&sp->resync_t);
+	sp->resync_t.expires	= jiffies + SIXP_RESYNC_TIMEOUT;
+	add_timer(&sp->resync_t);
 }
 
 static inline int tnc_init(struct sixpack *sp)
@@ -535,7 +537,9 @@ static inline int tnc_init(struct sixpack *sp)
 
 	sp->tty->ops->write(sp->tty, &inbyte, 1);
 
-	mod_timer(&sp->resync_t, jiffies + SIXP_RESYNC_TIMEOUT);
+	del_timer(&sp->resync_t);
+	sp->resync_t.expires = jiffies + SIXP_RESYNC_TIMEOUT;
+	add_timer(&sp->resync_t);
 
 	return 0;
 }
@@ -747,23 +751,6 @@ static int sixpack_ioctl(struct tty_struct *tty, struct file *file,
 	return err;
 }
 
-#ifdef CONFIG_COMPAT
-static long sixpack_compat_ioctl(struct tty_struct * tty, struct file * file,
-				unsigned int cmd, unsigned long arg)
-{
-	switch (cmd) {
-	case SIOCGIFNAME:
-	case SIOCGIFENCAP:
-	case SIOCSIFENCAP:
-	case SIOCSIFHWADDR:
-		return sixpack_ioctl(tty, file, cmd,
-				(unsigned long)compat_ptr(arg));
-	}
-
-	return -ENOIOCTLCMD;
-}
-#endif
-
 static struct tty_ldisc_ops sp_ldisc = {
 	.owner		= THIS_MODULE,
 	.magic		= TTY_LDISC_MAGIC,
@@ -771,9 +758,6 @@ static struct tty_ldisc_ops sp_ldisc = {
 	.open		= sixpack_open,
 	.close		= sixpack_close,
 	.ioctl		= sixpack_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= sixpack_compat_ioctl,
-#endif
 	.receive_buf	= sixpack_receive_buf,
 	.write_wakeup	= sixpack_write_wakeup,
 };
@@ -913,8 +897,11 @@ static void decode_prio_command(struct sixpack *sp, unsigned char cmd)
         /* if the state byte has been received, the TNC is present,
            so the resync timer can be reset. */
 
-	if (sp->tnc_state == TNC_IN_SYNC)
-		mod_timer(&sp->resync_t, jiffies + SIXP_INIT_RESYNC_TIMEOUT);
+	if (sp->tnc_state == TNC_IN_SYNC) {
+		del_timer(&sp->resync_t);
+		sp->resync_t.expires	= jiffies + SIXP_INIT_RESYNC_TIMEOUT;
+		add_timer(&sp->resync_t);
+	}
 
 	sp->status1 = cmd & SIXP_PRIO_DATA_MASK;
 }

@@ -124,8 +124,7 @@ static int ad5686_read_raw(struct iio_dev *indio_dev,
 		mutex_unlock(&indio_dev->mlock);
 		if (ret < 0)
 			return ret;
-		*val = (ret >> chan->scan_type.shift) &
-			GENMASK(chan->scan_type.realbits - 1, 0);
+		*val = ret;
 		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SCALE:
 		*val = st->vref_mv;
@@ -471,6 +470,6 @@ int ad5686_remove(struct device *dev)
 }
 EXPORT_SYMBOL_GPL(ad5686_remove);
 
-MODULE_AUTHOR("Michael Hennerich <hennerich@blackfin.uclinux.org>");
+MODULE_AUTHOR("Michael Hennerich <michael.hennerich@analog.com>");
 MODULE_DESCRIPTION("Analog Devices AD5686/85/84 DAC");
 MODULE_LICENSE("GPL v2");

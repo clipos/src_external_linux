@@ -3540,6 +3540,16 @@ static void bnx2x_drv_info_iscsi_stat(struct bnx2x *bp)
  */
 static void bnx2x_config_mf_bw(struct bnx2x *bp)
 {
+	/* Workaround for MFW bug.
+	 * MFW is not supposed to generate BW attention in
+	 * single function mode.
+	 */
+	if (!IS_MF(bp)) {
+		DP(BNX2X_MSG_MCP,
+		   "Ignoring MF BW config in single function mode\n");
+		return;
+	}
+
 	if (bp->link_vars.link_up) {
 		bnx2x_cmng_fns_init(bp, true, CMNG_FNS_MINMAX);
 		bnx2x_link_sync_notify(bp);
@@ -7718,6 +7728,9 @@ static int bnx2x_init_hw_port(struct bnx2x *bp)
 		REG_WR(bp, reg_addr, val);
 	}
 
+	if (CHIP_IS_E3B0(bp))
+		bp->flags |= PTP_SUPPORTED;
+
 	return 0;
 }
 
@@ -9347,16 +9360,10 @@ void bnx2x_chip_cleanup(struct bnx2x *bp, int unload_mode, bool keep_link)
 		BNX2X_ERR("Failed to schedule DEL commands for UC MACs list: %d\n",
 			  rc);
 
-	/* The whole *vlan_obj structure may be not initialized if VLAN
-	 * filtering offload is not supported by hardware. Currently this is
-	 * true for all hardware covered by CHIP_IS_E1x().
-	 */
-	if (!CHIP_IS_E1x(bp)) {
-		/* Remove all currently configured VLANs */
-		rc = bnx2x_del_all_vlans(bp);
-		if (rc < 0)
-			BNX2X_ERR("Failed to delete all VLANs\n");
-	}
+	/* Remove all currently configured VLANs */
+	rc = bnx2x_del_all_vlans(bp);
+	if (rc < 0)
+		BNX2X_ERR("Failed to delete all VLANs\n");
 
 	/* Disable LLH */
 	if (!CHIP_IS_E1(bp))
@@ -9445,8 +9452,13 @@ unload_error:
 	 * function stop ramrod is sent, since as part of this ramrod FW access
 	 * PTP registers.
 	 */
-	if (bp->flags & PTP_SUPPORTED)
+	if (bp->flags & PTP_SUPPORTED) {
 		bnx2x_stop_ptp(bp);
+		if (bp->ptp_clock) {
+			ptp_clock_unregister(bp->ptp_clock);
+			bp->ptp_clock = NULL;
+		}
+	}
 
 	/* Disable HW interrupts, NAPI */
 	bnx2x_netif_stop(bp, 1);
@@ -12527,9 +12539,6 @@ static int bnx2x_init_bp(struct bnx2x *bp)
 
 	bp->dump_preset_idx = 1;
 
-	if (CHIP_IS_E3B0(bp))
-		bp->flags |= PTP_SUPPORTED;
-
 	return rc;
 }
 
@@ -13141,6 +13150,7 @@ static const struct net_device_ops bnx2x_netdev_ops = {
 	.ndo_set_vf_mac		= bnx2x_set_vf_mac,
 	.ndo_set_vf_vlan	= bnx2x_set_vf_vlan,
 	.ndo_get_vf_config	= bnx2x_get_vf_config,
+	.ndo_set_vf_spoofchk	= bnx2x_set_vf_spoofchk,
 #endif
 #ifdef NETDEV_FCOE_WWNN
 	.ndo_fcoe_get_wwn	= bnx2x_fcoe_get_wwn,
@@ -13920,7 +13930,7 @@ static int bnx2x_ptp_enable(struct ptp_clock_info *ptp,
 	return -ENOTSUPP;
 }
 
-static void bnx2x_register_phc(struct bnx2x *bp)
+void bnx2x_register_phc(struct bnx2x *bp)
 {
 	/* Fill the ptp_clock_info struct and register PTP clock*/
 	bp->ptp_clock_info.owner = THIS_MODULE;
@@ -14122,8 +14132,6 @@ static int bnx2x_init_one(struct pci_dev *pdev,
 	       dev->base_addr, bp->pdev->irq, dev->dev_addr);
 	pcie_print_link_status(bp->pdev);
 
-	bnx2x_register_phc(bp);
-
 	if (!IS_MF_SD_STORAGE_PERSONALITY_ONLY(bp))
 		bnx2x_set_os_driver_state(bp, OS_DRIVER_STATE_DISABLED);
 
@@ -14156,11 +14164,6 @@ static void __bnx2x_remove(struct pci_dev *pdev,
 			   struct bnx2x *bp,
 			   bool remove_netdev)
 {
-	if (bp->ptp_clock) {
-		ptp_clock_unregister(bp->ptp_clock);
-		bp->ptp_clock = NULL;
-	}
-
 	/* Delete storage MAC address */
 	if (!NO_FCOE(bp)) {
 		rtnl_lock();
@@ -14404,14 +14407,6 @@ static pci_ers_result_t bnx2x_io_slot_reset(struct pci_dev *pdev)
 	}
 
 	rtnl_unlock();
-
-	/* If AER, perform cleanup of the PCIe registers */
-	if (bp->flags & AER_ENABLED) {
-		if (pci_cleanup_aer_uncorrect_error_status(pdev))
-			BNX2X_ERR("pci_cleanup_aer_uncorrect_error_status failed\n");
-		else
-			DP(NETIF_MSG_HW, "pci_cleanup_aer_uncorrect_error_status succeeded\n");
-	}
 
 	return PCI_ERS_RESULT_RECOVERED;
 }

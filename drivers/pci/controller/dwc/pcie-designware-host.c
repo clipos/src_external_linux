@@ -99,6 +99,9 @@ irqreturn_t dw_handle_msi_irq(struct pcie_port *pp)
 					       (i * MAX_MSI_IRQS_PER_CTRL) +
 					       pos);
 			generic_handle_irq(irq);
+			dw_pcie_wr_own_conf(pp, PCIE_MSI_INTR0_STATUS +
+						(i * MSI_REG_CTRL_BLOCK_SIZE),
+					    4, 1 << pos);
 			pos++;
 		}
 	}
@@ -165,8 +168,8 @@ static void dw_pci_bottom_mask(struct irq_data *data)
 		bit = data->hwirq % MAX_MSI_IRQS_PER_CTRL;
 
 		pp->irq_status[ctrl] &= ~(1 << bit);
-		dw_pcie_wr_own_conf(pp, PCIE_MSI_INTR0_MASK + res, 4,
-				    ~pp->irq_status[ctrl]);
+		dw_pcie_wr_own_conf(pp, PCIE_MSI_INTR0_ENABLE + res, 4,
+				    pp->irq_status[ctrl]);
 	}
 
 	raw_spin_unlock_irqrestore(&pp->lock, flags);
@@ -188,8 +191,8 @@ static void dw_pci_bottom_unmask(struct irq_data *data)
 		bit = data->hwirq % MAX_MSI_IRQS_PER_CTRL;
 
 		pp->irq_status[ctrl] |= 1 << bit;
-		dw_pcie_wr_own_conf(pp, PCIE_MSI_INTR0_MASK + res, 4,
-				    ~pp->irq_status[ctrl]);
+		dw_pcie_wr_own_conf(pp, PCIE_MSI_INTR0_ENABLE + res, 4,
+				    pp->irq_status[ctrl]);
 	}
 
 	raw_spin_unlock_irqrestore(&pp->lock, flags);
@@ -197,22 +200,13 @@ static void dw_pci_bottom_unmask(struct irq_data *data)
 
 static void dw_pci_bottom_ack(struct irq_data *d)
 {
-	struct pcie_port *pp  = irq_data_get_irq_chip_data(d);
-	unsigned int res, bit, ctrl;
-	unsigned long flags;
+	struct msi_desc *msi = irq_data_get_msi_desc(d);
+	struct pcie_port *pp;
 
-	ctrl = d->hwirq / MAX_MSI_IRQS_PER_CTRL;
-	res = ctrl * MSI_REG_CTRL_BLOCK_SIZE;
-	bit = d->hwirq % MAX_MSI_IRQS_PER_CTRL;
-
-	raw_spin_lock_irqsave(&pp->lock, flags);
-
-	dw_pcie_wr_own_conf(pp, PCIE_MSI_INTR0_STATUS + res, 4, 1 << bit);
+	pp = msi_desc_to_pci_sysdata(msi);
 
 	if (pp->ops->msi_irq_ack)
 		pp->ops->msi_irq_ack(d->hwirq, pp);
-
-	raw_spin_unlock_irqrestore(&pp->lock, flags);
 }
 
 static struct irq_chip dw_pci_msi_bottom_irq_chip = {
@@ -664,15 +658,10 @@ void dw_pcie_setup_rc(struct pcie_port *pp)
 	num_ctrls = pp->num_vectors / MAX_MSI_IRQS_PER_CTRL;
 
 	/* Initialize IRQ Status array */
-	for (ctrl = 0; ctrl < num_ctrls; ctrl++) {
-		dw_pcie_wr_own_conf(pp, PCIE_MSI_INTR0_MASK +
+	for (ctrl = 0; ctrl < num_ctrls; ctrl++)
+		dw_pcie_rd_own_conf(pp, PCIE_MSI_INTR0_ENABLE +
 					(ctrl * MSI_REG_CTRL_BLOCK_SIZE),
-				    4, ~0);
-		dw_pcie_wr_own_conf(pp, PCIE_MSI_INTR0_ENABLE +
-					(ctrl * MSI_REG_CTRL_BLOCK_SIZE),
-				    4, ~0);
-		pp->irq_status[ctrl] = 0;
-	}
+				    4, &pp->irq_status[ctrl]);
 
 	/* Setup RC BARs */
 	dw_pcie_writel_dbi(pci, PCI_BASE_ADDRESS_0, 0x00000004);

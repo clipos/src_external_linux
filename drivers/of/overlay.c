@@ -378,9 +378,7 @@ static int add_changeset_node(struct overlay_changeset *ovcs,
 		if (ret)
 			return ret;
 
-		ret = build_changeset_next_level(ovcs, tchild, node);
-		of_node_put(tchild);
-		return ret;
+		return build_changeset_next_level(ovcs, tchild, node);
 	}
 
 	if (node->phandle && tchild->phandle)
@@ -427,8 +425,8 @@ static int build_changeset_next_level(struct overlay_changeset *ovcs,
 	for_each_child_of_node(overlay_node, child) {
 		ret = add_changeset_node(ovcs, target_node, child);
 		if (ret) {
-			pr_debug("Failed to apply node @%pOF/%s, err=%d\n",
-				 target_node, child->name, ret);
+			pr_debug("Failed to apply node @%pOF/%pOFn, err=%d\n",
+				 target_node, child, ret);
 			of_node_put(child);
 			return ret;
 		}
