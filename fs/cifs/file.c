@@ -1131,10 +1131,10 @@ cifs_push_mandatory_locks(struct cifsFileInfo *cfile)
 
 	/*
 	 * Accessing maxBuf is racy with cifs_reconnect - need to store value
-	 * and check it for zero before using.
+	 * and check it before using.
 	 */
 	max_buf = tcon->ses->server->maxBuf;
-	if (!max_buf) {
+	if (max_buf < (sizeof(struct smb_hdr) + sizeof(LOCKING_ANDX_RANGE))) {
 		free_xid(xid);
 		return -EINVAL;
 	}
@@ -1471,10 +1471,10 @@ cifs_unlock_range(struct cifsFileInfo *cfile, struct file_lock *flock,
 
 	/*
 	 * Accessing maxBuf is racy with cifs_reconnect - need to store value
-	 * and check it for zero before using.
+	 * and check it before using.
 	 */
 	max_buf = tcon->ses->server->maxBuf;
-	if (!max_buf)
+	if (max_buf < (sizeof(struct smb_hdr) + sizeof(LOCKING_ANDX_RANGE)))
 		return -EINVAL;
 
 	max_num = (max_buf - sizeof(struct smb_hdr)) /
@@ -2617,11 +2617,13 @@ cifs_write_from_iter(loff_t offset, size_t len, struct iov_iter *from,
 		if (rc)
 			break;
 
+		cur_len = min_t(const size_t, len, wsize);
+
 		if (ctx->direct_io) {
 			ssize_t result;
 
 			result = iov_iter_get_pages_alloc(
-				from, &pagevec, wsize, &start);
+				from, &pagevec, cur_len, &start);
 			if (result < 0) {
 				cifs_dbg(VFS,
 					"direct_writev couldn't get user pages "
@@ -2630,6 +2632,9 @@ cifs_write_from_iter(loff_t offset, size_t len, struct iov_iter *from,
 					result, from->type,
 					from->iov_offset, from->count);
 				dump_stack();
+
+				rc = result;
+				add_credits_and_wake_if(server, credits, 0);
 				break;
 			}
 			cur_len = (size_t)result;
@@ -3313,13 +3318,16 @@ cifs_send_async_read(loff_t offset, size_t len, struct cifsFileInfo *open_file,
 					cur_len, &start);
 			if (result < 0) {
 				cifs_dbg(VFS,
-					"couldn't get user pages (cur_len=%zd)"
+					"couldn't get user pages (rc=%zd)"
 					" iter type %d"
 					" iov_offset %zd count %zd\n",
 					result, direct_iov.type,
 					direct_iov.iov_offset,
 					direct_iov.count);
 				dump_stack();
+
+				rc = result;
+				add_credits_and_wake_if(server, credits, 0);
 				break;
 			}
 			cur_len = (size_t)result;
