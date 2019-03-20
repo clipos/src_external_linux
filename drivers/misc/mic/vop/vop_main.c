@@ -381,16 +381,21 @@ static int vop_find_vqs(struct virtio_device *dev, unsigned nvqs,
 	struct _vop_vdev *vdev = to_vopvdev(dev);
 	struct vop_device *vpdev = vdev->vpdev;
 	struct mic_device_ctrl __iomem *dc = vdev->dc;
-	int i, err, retry;
+	int i, err, retry, queue_idx = 0;
 
 	/* We must have this many virtqueues. */
 	if (nvqs > ioread8(&vdev->desc->num_vq))
 		return -ENOENT;
 
 	for (i = 0; i < nvqs; ++i) {
+		if (!names[i]) {
+			vqs[i] = NULL;
+			continue;
+		}
+
 		dev_dbg(_vop_dev(vdev), "%s: %d: %s\n",
 			__func__, i, names[i]);
-		vqs[i] = vop_find_vq(dev, i, callbacks[i], names[i],
+		vqs[i] = vop_find_vq(dev, queue_idx++, callbacks[i], names[i],
 				     ctx ? ctx[i] : false);
 		if (IS_ERR(vqs[i])) {
 			err = PTR_ERR(vqs[i]);
@@ -563,6 +568,8 @@ static int _vop_remove_device(struct mic_device_desc __iomem *d,
 	int ret = -1;
 
 	if (ioread8(&dc->config_change) == MIC_VIRTIO_PARAM_DEV_REMOVE) {
+		struct device *dev = get_device(&vdev->vdev.dev);
+
 		dev_dbg(&vpdev->dev,
 			"%s %d config_change %d type %d vdev %p\n",
 			__func__, __LINE__,
@@ -574,7 +581,7 @@ static int _vop_remove_device(struct mic_device_desc __iomem *d,
 		iowrite8(-1, &dc->h2c_vdev_db);
 		if (status & VIRTIO_CONFIG_S_DRIVER_OK)
 			wait_for_completion(&vdev->reset_done);
-		put_device(&vdev->vdev.dev);
+		put_device(dev);
 		iowrite8(1, &dc->guest_ack);
 		dev_dbg(&vpdev->dev, "%s %d guest_ack %d\n",
 			__func__, __LINE__, ioread8(&dc->guest_ack));

@@ -35,6 +35,7 @@ static int vmlinux_section_warnings = 1;
 static int warn_unresolved = 0;
 /* How a symbol is exported */
 static int sec_mismatch_count = 0;
+static int writable_fptr_count = 0;
 static int sec_mismatch_verbose = 1;
 static int sec_mismatch_fatal = 0;
 /* ignore missing files */
@@ -954,6 +955,7 @@ enum mismatch {
 	ANY_EXIT_TO_ANY_INIT,
 	EXPORT_TO_INIT_EXIT,
 	EXTABLE_TO_NON_TEXT,
+	DATA_TO_TEXT
 };
 
 /**
@@ -1080,6 +1082,12 @@ static const struct sectioncheck sectioncheck[] = {
 	.good_tosec = {ALL_TEXT_SECTIONS , NULL},
 	.mismatch = EXTABLE_TO_NON_TEXT,
 	.handler = extable_mismatch_handler,
+},
+/* Do not reference code from writable data */
+{
+	.fromsec = { DATA_SECTIONS, NULL },
+	.bad_tosec = { ALL_TEXT_SECTIONS, NULL },
+	.mismatch = DATA_TO_TEXT
 }
 };
 
@@ -1204,6 +1212,30 @@ static int secref_whitelist(const struct sectioncheck *mismatch,
 	return 1;
 }
 
+static inline int is_arm_mapping_symbol(const char *str)
+{
+	return str[0] == '$' && strchr("axtd", str[1])
+	       && (str[2] == '\0' || str[2] == '.');
+}
+
+/*
+ * If there's no name there, ignore it; likewise, ignore it if it's
+ * one of the magic symbols emitted used by current ARM tools.
+ *
+ * Otherwise if find_symbols_between() returns those symbols, they'll
+ * fail the whitelist tests and cause lots of false alarms ... fixable
+ * only by merging __exit and __init sections into __text, bloating
+ * the kernel (which is especially evil on embedded platforms).
+ */
+static inline int is_valid_name(struct elf_info *elf, Elf_Sym *sym)
+{
+	const char *name = elf->strtab + sym->st_name;
+
+	if (!name || !strlen(name))
+		return 0;
+	return !is_arm_mapping_symbol(name);
+}
+
 /**
  * Find symbol based on relocation record info.
  * In some cases the symbol supplied is a valid symbol so
@@ -1229,10 +1261,12 @@ static Elf_Sym *find_elf_symbol(struct elf_info *elf, Elf64_Sword addr,
 			continue;
 		if (ELF_ST_TYPE(sym->st_info) == STT_SECTION)
 			continue;
-		if (sym->st_value == addr)
-			return sym;
+		if (!is_valid_name(elf, sym))
+			continue;
 		/* Find a symbol nearby - addr are maybe negative */
 		d = sym->st_value - addr;
+		if (d == 0)
+			return sym;
 		if (d < 0)
 			d = addr - sym->st_value;
 		if (d < distance) {
@@ -1245,30 +1279,6 @@ static Elf_Sym *find_elf_symbol(struct elf_info *elf, Elf64_Sword addr,
 		return near;
 	else
 		return NULL;
-}
-
-static inline int is_arm_mapping_symbol(const char *str)
-{
-	return str[0] == '$' && strchr("axtd", str[1])
-	       && (str[2] == '\0' || str[2] == '.');
-}
-
-/*
- * If there's no name there, ignore it; likewise, ignore it if it's
- * one of the magic symbols emitted used by current ARM tools.
- *
- * Otherwise if find_symbols_between() returns those symbols, they'll
- * fail the whitelist tests and cause lots of false alarms ... fixable
- * only by merging __exit and __init sections into __text, bloating
- * the kernel (which is especially evil on embedded platforms).
- */
-static inline int is_valid_name(struct elf_info *elf, Elf_Sym *sym)
-{
-	const char *name = elf->strtab + sym->st_name;
-
-	if (!name || !strlen(name))
-		return 0;
-	return !is_arm_mapping_symbol(name);
 }
 
 /*
@@ -1391,7 +1401,11 @@ static void report_sec_mismatch(const char *modname,
 	char *prl_from;
 	char *prl_to;
 
-	sec_mismatch_count++;
+	if (mismatch->mismatch == DATA_TO_TEXT)
+		writable_fptr_count++;
+	else
+		sec_mismatch_count++;
+
 	if (!sec_mismatch_verbose)
 		return;
 
@@ -1514,6 +1528,14 @@ static void report_sec_mismatch(const char *modname,
 	case EXTABLE_TO_NON_TEXT:
 		fatal("There's a special handler for this mismatch type, "
 		      "we should never get here.");
+		break;
+	case DATA_TO_TEXT:
+#if 0
+		fprintf(stderr,
+		"The %s %s:%s references\n"
+		"the %s %s:%s%s\n",
+		from, fromsec, fromsym, to, tosec, tosym, to_p);
+#endif
 		break;
 	}
 	fprintf(stderr, "\n");
@@ -2157,7 +2179,7 @@ static void add_intree_flag(struct buffer *b, int is_intree)
 /* Cannot check for assembler */
 static void add_retpoline(struct buffer *b)
 {
-	buf_printf(b, "\n#ifdef RETPOLINE\n");
+	buf_printf(b, "\n#ifdef CONFIG_RETPOLINE\n");
 	buf_printf(b, "MODULE_INFO(retpoline, \"Y\");\n");
 	buf_printf(b, "#endif\n");
 }
@@ -2526,6 +2548,14 @@ int main(int argc, char **argv)
 		}
 	}
 	free(buf.p);
+	if (writable_fptr_count) {
+		if (!sec_mismatch_verbose) {
+			warn("modpost: Found %d writable function pointer(s).\n"
+			     "To see full details build your kernel with:\n"
+			     "'make CONFIG_DEBUG_SECTION_MISMATCH=y'\n",
+			     writable_fptr_count);
+		}
+	}
 
 	return err;
 }

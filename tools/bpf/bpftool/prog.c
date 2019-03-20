@@ -84,7 +84,7 @@ static const char * const attach_type_strings[] = {
 	[__MAX_BPF_ATTACH_TYPE] = NULL,
 };
 
-enum bpf_attach_type parse_attach_type(const char *str)
+static enum bpf_attach_type parse_attach_type(const char *str)
 {
 	enum bpf_attach_type type;
 
@@ -130,13 +130,14 @@ static void print_boot_time(__u64 nsecs, char *buf, unsigned int size)
 
 static int prog_fd_by_tag(unsigned char *tag)
 {
-	struct bpf_prog_info info = {};
-	__u32 len = sizeof(info);
 	unsigned int id = 0;
 	int err;
 	int fd;
 
 	while (true) {
+		struct bpf_prog_info info = {};
+		__u32 len = sizeof(info);
+
 		err = bpf_prog_get_next_id(id, &id);
 		if (err) {
 			p_err("%s", strerror(errno));
@@ -713,7 +714,7 @@ struct map_replace {
 	char *name;
 };
 
-int map_replace_compar(const void *p1, const void *p2)
+static int map_replace_compar(const void *p1, const void *p2)
 {
 	const struct map_replace *a = p1, *b = p2;
 

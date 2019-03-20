@@ -232,6 +232,13 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
 
 	newbrk = PAGE_ALIGN(brk);
 	oldbrk = PAGE_ALIGN(mm->brk);
+	/* properly handle unaligned min_brk as an empty heap */
+	if (min_brk & ~PAGE_MASK) {
+		if (brk == min_brk)
+			newbrk -= PAGE_SIZE;
+		if (mm->brk == min_brk)
+			oldbrk -= PAGE_SIZE;
+	}
 	if (oldbrk == newbrk) {
 		mm->brk = brk;
 		goto success;
@@ -2415,12 +2422,11 @@ int expand_downwards(struct vm_area_struct *vma,
 {
 	struct mm_struct *mm = vma->vm_mm;
 	struct vm_area_struct *prev;
-	int error;
+	int error = 0;
 
 	address &= PAGE_MASK;
-	error = security_mmap_addr(address);
-	if (error)
-		return error;
+	if (address < mmap_min_addr)
+		return -EPERM;
 
 	/* Enforce stack_guard_gap */
 	prev = vma->vm_prev;

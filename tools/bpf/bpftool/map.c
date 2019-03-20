@@ -383,7 +383,10 @@ static void print_entry_plain(struct bpf_map_info *info, unsigned char *key,
 		printf(single_line ? "  " : "\n");
 
 		printf("value:%c", break_names ? '\n' : ' ');
-		fprint_hex(stdout, value, info->value_size, " ");
+		if (value)
+			fprint_hex(stdout, value, info->value_size, " ");
+		else
+			printf("<no entry>");
 
 		printf("\n");
 	} else {
@@ -398,8 +401,11 @@ static void print_entry_plain(struct bpf_map_info *info, unsigned char *key,
 		for (i = 0; i < n; i++) {
 			printf("value (CPU %02d):%c",
 			       i, info->value_size > 16 ? '\n' : ' ');
-			fprint_hex(stdout, value + i * step,
-				   info->value_size, " ");
+			if (value)
+				fprint_hex(stdout, value + i * step,
+					   info->value_size, " ");
+			else
+				printf("<no entry>");
 			printf("\n");
 		}
 	}
@@ -431,6 +437,20 @@ static char **parse_bytes(char **argv, const char *name, unsigned char *val,
 	}
 
 	return argv + i;
+}
+
+/* on per cpu maps we must copy the provided value on all value instances */
+static void fill_per_cpu_value(struct bpf_map_info *info, void *value)
+{
+	unsigned int i, n, step;
+
+	if (!map_is_per_cpu(info->type))
+		return;
+
+	n = get_possible_cpus();
+	step = round_up(info->value_size, 8);
+	for (i = 1; i < n; i++)
+		memcpy(value + i * step, value, info->value_size);
 }
 
 static int parse_elem(char **argv, struct bpf_map_info *info,
@@ -512,6 +532,8 @@ static int parse_elem(char **argv, struct bpf_map_info *info,
 			argv = parse_bytes(argv, "value", value, value_size);
 			if (!argv)
 				return -1;
+
+			fill_per_cpu_value(info, value);
 		}
 
 		return parse_elem(argv, info, key, NULL, key_size, value_size,
@@ -731,7 +753,11 @@ static int dump_map_elem(int fd, void *key, void *value,
 		jsonw_string_field(json_wtr, "error", strerror(lookup_errno));
 		jsonw_end_object(json_wtr);
 	} else {
-		print_entry_error(map_info, key, strerror(lookup_errno));
+		if (errno == ENOENT)
+			print_entry_plain(map_info, key, NULL);
+		else
+			print_entry_error(map_info, key,
+					  strerror(lookup_errno));
 	}
 
 	return 0;

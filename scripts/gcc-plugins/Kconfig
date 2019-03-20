@@ -59,6 +59,11 @@ config GCC_PLUGIN_LATENT_ENTROPY
 	  is some slowdown of the boot process (about 0.5%) and fork and
 	  irq processing.
 
+	  When extra_latent_entropy is passed on the kernel command line,
+	  entropy will be extracted from up to the first 4GB of RAM while the
+	  runtime memory allocator is being initialized.  This costs even more
+	  slowdown of the boot process.
+
 	  Note that entropy extracted this way is not cryptographically
 	  secure!
 
@@ -143,6 +148,8 @@ config GCC_PLUGIN_STACKLEAK
 	bool "Erase the kernel stack before returning from syscalls"
 	depends on GCC_PLUGINS
 	depends on HAVE_ARCH_STACKLEAK
+	imply VMAP_STACK
+	imply SCHED_STACK_END_CHECK
 	help
 	  This option makes the kernel erase the kernel stack before
 	  returning from system calls. That reduces the information which

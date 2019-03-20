@@ -135,18 +135,7 @@ __setup("selinux=", selinux_enabled_setup);
 int selinux_enabled = 1;
 #endif
 
-static unsigned int selinux_checkreqprot_boot =
-	CONFIG_SECURITY_SELINUX_CHECKREQPROT_VALUE;
-
-static int __init checkreqprot_setup(char *str)
-{
-	unsigned long checkreqprot;
-
-	if (!kstrtoul(str, 0, &checkreqprot))
-		selinux_checkreqprot_boot = checkreqprot ? 1 : 0;
-	return 1;
-}
-__setup("checkreqprot=", checkreqprot_setup);
+static const unsigned int selinux_checkreqprot_boot;
 
 static struct kmem_cache *sel_inode_cache;
 static struct kmem_cache *file_security_cache;
@@ -2934,7 +2923,7 @@ static int selinux_sb_kern_mount(struct super_block *sb, int flags, void *data)
 		return rc;
 
 	/* Allow all mounts performed by the kernel */
-	if (flags & MS_KERNMOUNT)
+	if (flags & (MS_KERNMOUNT | MS_SUBMOUNT))
 		return 0;
 
 	ad.type = LSM_AUDIT_DATA_DENTRY;
