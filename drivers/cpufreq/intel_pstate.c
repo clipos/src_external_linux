@@ -830,6 +830,28 @@ skip_epp:
 	wrmsrl_on_cpu(cpu, MSR_HWP_REQUEST, value);
 }
 
+static void intel_pstate_hwp_force_min_perf(int cpu)
+{
+	u64 value;
+	int min_perf;
+
+	value = all_cpu_data[cpu]->hwp_req_cached;
+	value &= ~GENMASK_ULL(31, 0);
+	min_perf = HWP_LOWEST_PERF(all_cpu_data[cpu]->hwp_cap_cached);
+
+	/* Set hwp_max = hwp_min */
+	value |= HWP_MAX_PERF(min_perf);
+	value |= HWP_MIN_PERF(min_perf);
+
+	/* Set EPP/EPB to min */
+	if (static_cpu_has(X86_FEATURE_HWP_EPP))
+		value |= HWP_ENERGY_PERF_PREFERENCE(HWP_EPP_POWERSAVE);
+	else
+		intel_pstate_set_epb(cpu, HWP_EPP_BALANCE_POWERSAVE);
+
+	wrmsrl_on_cpu(cpu, MSR_HWP_REQUEST, value);
+}
+
 static int intel_pstate_hwp_save_state(struct cpufreq_policy *policy)
 {
 	struct cpudata *cpu_data = all_cpu_data[policy->cpu];
@@ -873,7 +895,7 @@ static void intel_pstate_update_policies(void)
 /************************** sysfs begin ************************/
 #define show_one(file_name, object)					\
 	static ssize_t show_##file_name					\
-	(struct kobject *kobj, struct kobj_attribute *attr, char *buf)	\
+	(struct kobject *kobj, struct attribute *attr, char *buf)	\
 	{								\
 		return sprintf(buf, "%u\n", global.object);		\
 	}
@@ -882,7 +904,7 @@ static ssize_t intel_pstate_show_status(char *buf);
 static int intel_pstate_update_status(const char *buf, size_t size);
 
 static ssize_t show_status(struct kobject *kobj,
-			   struct kobj_attribute *attr, char *buf)
+			   struct attribute *attr, char *buf)
 {
 	ssize_t ret;
 
@@ -893,7 +915,7 @@ static ssize_t show_status(struct kobject *kobj,
 	return ret;
 }
 
-static ssize_t store_status(struct kobject *a, struct kobj_attribute *b,
+static ssize_t store_status(struct kobject *a, struct attribute *b,
 			    const char *buf, size_t count)
 {
 	char *p = memchr(buf, '\n', count);
@@ -907,7 +929,7 @@ static ssize_t store_status(struct kobject *a, struct kobj_attribute *b,
 }
 
 static ssize_t show_turbo_pct(struct kobject *kobj,
-				struct kobj_attribute *attr, char *buf)
+				struct attribute *attr, char *buf)
 {
 	struct cpudata *cpu;
 	int total, no_turbo, turbo_pct;
@@ -933,7 +955,7 @@ static ssize_t show_turbo_pct(struct kobject *kobj,
 }
 
 static ssize_t show_num_pstates(struct kobject *kobj,
-				struct kobj_attribute *attr, char *buf)
+				struct attribute *attr, char *buf)
 {
 	struct cpudata *cpu;
 	int total;
@@ -954,7 +976,7 @@ static ssize_t show_num_pstates(struct kobject *kobj,
 }
 
 static ssize_t show_no_turbo(struct kobject *kobj,
-			     struct kobj_attribute *attr, char *buf)
+			     struct attribute *attr, char *buf)
 {
 	ssize_t ret;
 
@@ -976,7 +998,7 @@ static ssize_t show_no_turbo(struct kobject *kobj,
 	return ret;
 }
 
-static ssize_t store_no_turbo(struct kobject *a, struct kobj_attribute *b,
+static ssize_t store_no_turbo(struct kobject *a, struct attribute *b,
 			      const char *buf, size_t count)
 {
 	unsigned int input;
@@ -1023,7 +1045,7 @@ static ssize_t store_no_turbo(struct kobject *a, struct kobj_attribute *b,
 	return count;
 }
 
-static ssize_t store_max_perf_pct(struct kobject *a, struct kobj_attribute *b,
+static ssize_t store_max_perf_pct(struct kobject *a, struct attribute *b,
 				  const char *buf, size_t count)
 {
 	unsigned int input;
@@ -1053,7 +1075,7 @@ static ssize_t store_max_perf_pct(struct kobject *a, struct kobj_attribute *b,
 	return count;
 }
 
-static ssize_t store_min_perf_pct(struct kobject *a, struct kobj_attribute *b,
+static ssize_t store_min_perf_pct(struct kobject *a, struct attribute *b,
 				  const char *buf, size_t count)
 {
 	unsigned int input;
@@ -1085,13 +1107,12 @@ static ssize_t store_min_perf_pct(struct kobject *a, struct kobj_attribute *b,
 }
 
 static ssize_t show_hwp_dynamic_boost(struct kobject *kobj,
-				struct kobj_attribute *attr, char *buf)
+				struct attribute *attr, char *buf)
 {
 	return sprintf(buf, "%u\n", hwp_boost);
 }
 
-static ssize_t store_hwp_dynamic_boost(struct kobject *a,
-				       struct kobj_attribute *b,
+static ssize_t store_hwp_dynamic_boost(struct kobject *a, struct attribute *b,
 				       const char *buf, size_t count)
 {
 	unsigned int input;
@@ -1931,7 +1952,7 @@ static void intel_pstate_clear_update_util_hook(unsigned int cpu)
 
 	cpufreq_remove_update_util_hook(cpu);
 	cpu_data->update_util_set = false;
-	synchronize_sched();
+	synchronize_rcu();
 }
 
 static int intel_pstate_get_max_freq(struct cpudata *cpu)
@@ -2085,10 +2106,12 @@ static void intel_pstate_stop_cpu(struct cpufreq_policy *policy)
 	pr_debug("CPU %d exiting\n", policy->cpu);
 
 	intel_pstate_clear_update_util_hook(policy->cpu);
-	if (hwp_active)
+	if (hwp_active) {
 		intel_pstate_hwp_save_state(policy);
-	else
+		intel_pstate_hwp_force_min_perf(policy->cpu);
+	} else {
 		intel_cpufreq_stop_cpu(policy);
+	}
 }
 
 static int intel_pstate_cpu_exit(struct cpufreq_policy *policy)

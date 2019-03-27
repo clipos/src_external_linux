@@ -1301,7 +1301,7 @@ static int parse_pred(const char *str, void *data,
 		/* go past the last quote */
 		i++;
 
-	} else if (isdigit(str[i]) || str[i] == '-') {
+	} else if (isdigit(str[i])) {
 
 		/* Make sure the field is not a string */
 		if (is_string_field(field)) {
@@ -1313,9 +1313,6 @@ static int parse_pred(const char *str, void *data,
 			parse_error(pe, FILT_ERR_ILLEGAL_FIELD_OP, pos + i);
 			goto err_free;
 		}
-
-		if (str[i] == '-')
-			i++;
 
 		/* We allow 0xDEADBEEF */
 		while (isalnum(str[i]))
@@ -1619,7 +1616,7 @@ static int process_system_preds(struct trace_subsystem_dir *dir,
 
 	/*
 	 * The calls can still be using the old filters.
-	 * Do a synchronize_sched() and to ensure all calls are
+	 * Do a synchronize_rcu() and to ensure all calls are
 	 * done with them before we free them.
 	 */
 	tracepoint_synchronize_unregister();
@@ -1851,7 +1848,7 @@ int apply_subsystem_event_filter(struct trace_subsystem_dir *dir,
 	if (filter) {
 		/*
 		 * No event actually uses the system filter
-		 * we can free it without synchronize_sched().
+		 * we can free it without synchronize_rcu().
 		 */
 		__free_filter(system->filter);
 		system->filter = filter;

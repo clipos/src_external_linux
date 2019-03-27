@@ -1303,10 +1303,6 @@ static void ip_del_fnhe(struct fib_nh *nh, __be32 daddr)
 		if (fnhe->fnhe_daddr == daddr) {
 			rcu_assign_pointer(*fnhe_p, rcu_dereference_protected(
 				fnhe->fnhe_next, lockdep_is_held(&fnhe_lock)));
-			/* set fnhe_daddr to 0 to ensure it won't bind with
-			 * new dsts in rt_bind_exception().
-			 */
-			fnhe->fnhe_daddr = 0;
 			fnhe_flush_routes(fnhe);
 			kfree_rcu(fnhe, rcu);
 			break;
@@ -1684,7 +1680,7 @@ static void ip_handle_martian_source(struct net_device *dev,
 			print_hex_dump(KERN_WARNING, "ll header: ",
 				       DUMP_PREFIX_OFFSET, 16, 1,
 				       skb_mac_header(skb),
-				       dev->hard_header_len, true);
+				       dev->hard_header_len, false);
 		}
 	}
 #endif
@@ -2148,13 +2144,12 @@ int ip_route_input_rcu(struct sk_buff *skb, __be32 daddr, __be32 saddr,
 		int our = 0;
 		int err = -EINVAL;
 
-		if (!in_dev)
-			return err;
-		our = ip_check_mc_rcu(in_dev, daddr, saddr,
-				      ip_hdr(skb)->protocol);
+		if (in_dev)
+			our = ip_check_mc_rcu(in_dev, daddr, saddr,
+					      ip_hdr(skb)->protocol);
 
 		/* check l3 master if no match yet */
-		if (!our && netif_is_l3_slave(dev)) {
+		if ((!in_dev || !our) && netif_is_l3_slave(dev)) {
 			struct in_device *l3_in_dev;
 
 			l3_in_dev = __in_dev_get_rcu(skb->dev);
@@ -2857,6 +2852,7 @@ static int inet_rtm_getroute(struct sk_buff *in_skb, struct nlmsghdr *nlh,
 			err = -rt->dst.error;
 	} else {
 		fl4.flowi4_iif = LOOPBACK_IFINDEX;
+		skb->dev = net->loopback_dev;
 		rt = ip_route_output_key_hash_rcu(net, &fl4, &res, skb);
 		err = 0;
 		if (IS_ERR(rt))

@@ -289,12 +289,14 @@ static inline void erofs_workstation_cleanup_all(struct super_block *sb)
 }
 
 #ifdef EROFS_FS_HAS_MANAGED_CACHE
-#define EROFS_UNALLOCATED_CACHED_PAGE	((void *)0x5F0EF00D)
-
 extern int erofs_try_to_free_all_cached_pages(struct erofs_sb_info *sbi,
 	struct erofs_workgroup *egrp);
 extern int erofs_try_to_free_cached_page(struct address_space *mapping,
 	struct page *page);
+
+#define MNGD_MAPPING(sbi)	((sbi)->managed_cache->i_mapping)
+#else
+#define MNGD_MAPPING(sbi)	(NULL)
 #endif
 
 #define DEFAULT_MAX_SYNC_DECOMPRESS_PAGES	3
@@ -352,17 +354,12 @@ static inline erofs_off_t iloc(struct erofs_sb_info *sbi, erofs_nid_t nid)
 	return blknr_to_addr(sbi->meta_blkaddr) + (nid << sbi->islotbits);
 }
 
-/* atomic flag definitions */
-#define EROFS_V_EA_INITED_BIT	0
-
-/* bitlock definitions (arranged in reverse order) */
-#define EROFS_V_BL_XATTR_BIT	(BITS_PER_LONG - 1)
+#define inode_set_inited_xattr(inode)   (EROFS_V(inode)->flags |= 1)
+#define inode_has_inited_xattr(inode)   (EROFS_V(inode)->flags & 1)
 
 struct erofs_vnode {
 	erofs_nid_t nid;
-
-	/* atomic flags (including bitlocks) */
-	unsigned long flags;
+	unsigned int flags;
 
 	unsigned char data_mapping_mode;
 	/* inline size in bytes */

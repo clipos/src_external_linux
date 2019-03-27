@@ -5554,7 +5554,7 @@ out_put:
 
 static const struct vm_operations_struct perf_mmap_vmops = {
 	.open		= perf_mmap_open,
-	.close		= perf_mmap_close, /* non mergable */
+	.close		= perf_mmap_close, /* non mergeable */
 	.fault		= perf_mmap_fault,
 	.page_mkwrite	= perf_mmap_fault,
 };
@@ -9939,7 +9939,7 @@ static void account_event(struct perf_event *event)
 			 * call the perf scheduling hooks before proceeding to
 			 * install events that need them.
 			 */
-			synchronize_sched();
+			synchronize_rcu();
 		}
 		/*
 		 * Now that we have waited for the sync_sched(), allow further
@@ -10156,7 +10156,7 @@ static int perf_copy_attr(struct perf_event_attr __user *uattr,
 	u32 size;
 	int ret;
 
-	if (!access_ok(VERIFY_WRITE, uattr, PERF_ATTR_SIZE_VER0))
+	if (!access_ok(uattr, PERF_ATTR_SIZE_VER0))
 		return -EFAULT;
 
 	/*

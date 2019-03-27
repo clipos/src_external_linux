@@ -1738,12 +1738,8 @@ static int macb_pad_and_fcs(struct sk_buff **skb, struct net_device *ndev)
 		*skb = nskb;
 	}
 
-	if (padlen) {
-		if (padlen >= ETH_FCS_LEN)
-			skb_put_zero(*skb, padlen - ETH_FCS_LEN);
-		else
-			skb_trim(*skb, ETH_FCS_LEN - padlen);
-	}
+	if (padlen > ETH_FCS_LEN)
+		skb_put_zero(*skb, padlen - ETH_FCS_LEN);
 
 add_fcs:
 	/* set FCS to packet */
@@ -4097,7 +4093,7 @@ static int macb_probe(struct platform_device *pdev)
 	if (mac) {
 		ether_addr_copy(bp->dev->dev_addr, mac);
 	} else {
-		err = of_get_nvmem_mac_address(np, bp->dev->dev_addr);
+		err = nvmem_get_mac_address(&pdev->dev, bp->dev->dev_addr);
 		if (err) {
 			if (err == -EPROBE_DEFER)
 				goto err_out_free_netdev;

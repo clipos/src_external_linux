@@ -190,7 +190,7 @@ int mv88e6xxx_port_set_duplex(struct mv88e6xxx_chip *chip, int port, int dup)
 		/* normal duplex detection */
 		break;
 	default:
-		return -EOPNOTSUPP;
+		return -EINVAL;
 	}
 
 	err = mv88e6xxx_port_write(chip, port, MV88E6XXX_PORT_MAC_CTL, reg);
@@ -368,11 +368,14 @@ int mv88e6390x_port_set_cmode(struct mv88e6xxx_chip *chip, int port,
 	u16 reg;
 	int err;
 
-	if (mode == PHY_INTERFACE_MODE_NA)
-		return 0;
-
 	if (port != 9 && port != 10)
 		return -EOPNOTSUPP;
+
+	/* Default to a slow mode, so freeing up SERDES interfaces for
+	 * other ports which might use them for SFPs.
+	 */
+	if (mode == PHY_INTERFACE_MODE_NA)
+		mode = PHY_INTERFACE_MODE_1000BASEX;
 
 	switch (mode) {
 	case PHY_INTERFACE_MODE_1000BASEX:
@@ -439,6 +442,21 @@ int mv88e6390x_port_set_cmode(struct mv88e6xxx_chip *chip, int port,
 	chip->ports[port].cmode = cmode;
 
 	return 0;
+}
+
+int mv88e6390_port_set_cmode(struct mv88e6xxx_chip *chip, int port,
+			     phy_interface_t mode)
+{
+	switch (mode) {
+	case PHY_INTERFACE_MODE_XGMII:
+	case PHY_INTERFACE_MODE_XAUI:
+	case PHY_INTERFACE_MODE_RXAUI:
+		return -EINVAL;
+	default:
+		break;
+	}
+
+	return mv88e6390x_port_set_cmode(chip, port, mode);
 }
 
 int mv88e6185_port_get_cmode(struct mv88e6xxx_chip *chip, int port, u8 *cmode)

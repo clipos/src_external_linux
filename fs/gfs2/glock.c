@@ -107,7 +107,7 @@ static int glock_wake_function(wait_queue_entry_t *wait, unsigned int mode,
 
 static wait_queue_head_t *glock_waitqueue(struct lm_lockname *name)
 {
-	u32 hash = jhash2((u32 *)name, ht_parms.key_len / 4, 0);
+	u32 hash = jhash2((u32 *)name, sizeof(*name) / 4, 0);
 
 	return glock_wait_table + hash_32(hash, GLOCK_WAIT_TABLE_BITS);
 }
@@ -1777,7 +1777,7 @@ static const char *gflags2str(char *buf, const struct gfs2_glock *gl)
  *
  */
 
-void gfs2_dump_glock(struct seq_file *seq, const struct gfs2_glock *gl)
+void gfs2_dump_glock(struct seq_file *seq, struct gfs2_glock *gl)
 {
 	const struct gfs2_glock_operations *glops = gl->gl_ops;
 	unsigned long long dtime;
