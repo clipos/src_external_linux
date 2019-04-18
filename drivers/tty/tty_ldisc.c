@@ -855,8 +855,8 @@ void tty_ldisc_deinit(struct tty_struct *tty)
 	tty->ldisc = NULL;
 }
 
-static int zero;
-static int one = 1;
+static int zero __read_only;
+static int one __read_only = 1;
 static struct ctl_table tty_table[] = {
 	{
 		.procname	= "ldisc_autoload",
