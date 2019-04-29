@@ -134,6 +134,7 @@ static int zero __read_only;
 static int __maybe_unused one __read_only = 1;
 static int __maybe_unused two __read_only = 2;
 static int __maybe_unused four __read_only = 4;
+static unsigned long zero_ul __read_only;
 static unsigned long one_ul __read_only = 1;
 static unsigned long long_max __read_only = LONG_MAX;
 static int one_hundred __read_only = 100;
@@ -1774,7 +1775,7 @@ static struct ctl_table fs_table[] = {
 		.maxlen		= sizeof(files_stat.max_files),
 		.mode		= 0644,
 		.proc_handler	= proc_doulongvec_minmax,
-		.extra1		= &zero,
+		.extra1		= &zero_ul,
 		.extra2		= &long_max,
 	},
 	{

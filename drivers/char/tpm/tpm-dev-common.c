@@ -205,6 +205,11 @@ __poll_t tpm_common_poll(struct file *file, poll_table *wait)
 	poll_wait(file, &priv->async_wait, wait);
 	mutex_lock(&priv->buffer_mutex);
 
+	/*
+	 * The response_length indicates if there is still response
+	 * (or part of it) to be consumed. Partial reads decrease it
+	 * by the number of bytes read, and write resets it the zero.
+	 */
 	if (priv->response_length)
 		mask = EPOLLIN | EPOLLRDNORM;
 	else
