@@ -429,7 +429,19 @@ void __used stackleak_check_alloca(unsigned long size)
 	BUG_ON(get_stack_info((unsigned long *)sp, current, &stack_info,
 			      &visit_mask));
 
-	stack_left = sp - (unsigned long)stack_info.begin;
+	switch (stack_info.type) {
+	case STACK_TYPE_TASK:
+		stack_left = sp & (THREAD_SIZE - 1);
+		break;
+	case STACK_TYPE_IRQ:
+		stack_left = sp & (IRQ_STACK_SIZE - 1);
+		break;
+	case STACK_TYPE_EXCEPTION ... STACK_TYPE_EXCEPTION_LAST:
+		stack_left = sp & (EXCEPTION_STKSZ - 1);
+		break;
+	default:
+		BUG();
+	}
 
 	if (size >= stack_left) {
 		/*
