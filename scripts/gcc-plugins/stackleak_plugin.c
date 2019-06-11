@@ -8,13 +8,11 @@
  * but for the kernel it doesn't matter since it doesn't link against
  * any of the gcc libraries
  *
- * This gcc plugin is needed for tracking the lowest border of the kernel stack
- * and checking that alloca() calls don't cause stack overflow. It instruments
- * the kernel code inserting:
- *  - the stackleak_check_alloca() call before alloca() and the
- *     stackleak_track_stack() call after it;
- *  - the stackleak_track_stack() call for the functions with a stack frame
- *     size greater than or equal to the "track-min-size" plugin parameter.
+ * This gcc plugin is needed for tracking the lowest border of the kernel stack.
+ * It instruments the kernel code inserting stackleak_track_stack() calls:
+ *  - after alloca();
+ *  - for the functions with a stack frame size greater than or equal
+ *     to the "track-min-size" plugin parameter.
  *
  * This plugin is ported from grsecurity/PaX. For more information see:
  *   https://grsecurity.net/
@@ -35,44 +33,18 @@ __visible int plugin_is_GPL_compatible;
 
 static int track_frame_size = -1;
 static const char track_function[] = "stackleak_track_stack";
-static const char check_function[] = "stackleak_check_alloca";
 
 /*
  * Mark these global variables (roots) for gcc garbage collector since
  * they point to the garbage-collected memory.
  */
 static GTY(()) tree track_function_decl;
-static GTY(()) tree check_function_decl;
 
 static struct plugin_info stackleak_plugin_info = {
 	.version = "201707101337",
 	.help = "track-min-size=nn\ttrack stack for functions with a stack frame size >= nn bytes\n"
 		"disable\t\tdo not activate the plugin\n"
 };
-
-static void stackleak_add_check_alloca(gimple_stmt_iterator *gsi)
-{
-	gimple stmt;
-	gcall *stackleak_check_alloca;
-	tree alloca_size;
-	cgraph_node_ptr node;
-	int frequency;
-	basic_block bb;
-
-	/* Insert call to void stackleak_check_alloca(unsigned long size) */
-	alloca_size = gimple_call_arg(gsi_stmt(*gsi), 0);
-	stmt = gimple_build_call(check_function_decl, 1, alloca_size);
-	stackleak_check_alloca = as_a_gcall(stmt);
-	gsi_insert_before(gsi, stackleak_check_alloca, GSI_SAME_STMT);
-
-	/* Update the cgraph */
-	bb = gimple_bb(stackleak_check_alloca);
-	node = cgraph_get_create_node(check_function_decl);
-	gcc_assert(node);
-	frequency = compute_call_stmt_bb_frequency(current_function_decl, bb);
-	cgraph_create_edge(cgraph_get_node(current_function_decl), node,
-			stackleak_check_alloca, bb->count, frequency);
-}
 
 static void stackleak_add_track_stack(gimple_stmt_iterator *gsi, bool after)
 {
@@ -116,8 +88,7 @@ static bool is_alloca(gimple stmt)
 
 /*
  * Work with the GIMPLE representation of the code. Insert the
- * stackleak_check_alloca() call before alloca() and stackleak_track_stack()
- * call after it. Also insert stackleak_track_stack() call into the beginning
+ * stackleak_track_stack() call after alloca() and into the beginning
  * of the function if it is not instrumented.
  */
 static unsigned int stackleak_instrument_execute(void)
@@ -151,9 +122,6 @@ static unsigned int stackleak_instrument_execute(void)
 
 			if (!is_alloca(stmt))
 				continue;
-
-			/* Insert stack overflow check before alloca() */
-			stackleak_add_check_alloca(&gsi);
 
 			/* Insert stackleak_track_stack() call after alloca() */
 			stackleak_add_track_stack(&gsi, true);
@@ -316,10 +284,7 @@ static bool stackleak_gate(void)
 	return track_frame_size >= 0;
 }
 
-/*
- * Build function declarations for stackleak_track_stack() and
- * stackleak_check_alloca().
- */
+/* Build the function declaration for stackleak_track_stack() */
 static void stackleak_start_unit(void *gcc_data __unused,
 				 void *user_data __unused)
 {
@@ -334,17 +299,6 @@ static void stackleak_start_unit(void *gcc_data __unused,
 	DECL_EXTERNAL(track_function_decl) = 1;
 	DECL_ARTIFICIAL(track_function_decl) = 1;
 	DECL_PRESERVE_P(track_function_decl) = 1;
-
-	/* void stackleak_check_alloca(unsigned long) */
-	fntype = build_function_type_list(void_type_node,
-				long_unsigned_type_node, NULL_TREE);
-	check_function_decl = build_fn_decl(check_function, fntype);
-	DECL_ASSEMBLER_NAME(check_function_decl); /* for LTO */
-	TREE_PUBLIC(check_function_decl) = 1;
-	TREE_USED(check_function_decl) = 1;
-	DECL_EXTERNAL(check_function_decl) = 1;
-	DECL_ARTIFICIAL(check_function_decl) = 1;
-	DECL_PRESERVE_P(check_function_decl) = 1;
 }
 
 /*
@@ -392,13 +346,6 @@ __visible int plugin_init(struct plugin_name_args *plugin_info,
 			.base = &track_function_decl,
 			.nelt = 1,
 			.stride = sizeof(track_function_decl),
-			.cb = &gt_ggc_mx_tree_node,
-			.pchw = &gt_pch_nx_tree_node
-		},
-		{
-			.base = &check_function_decl,
-			.nelt = 1,
-			.stride = sizeof(check_function_decl),
 			.cb = &gt_ggc_mx_tree_node,
 			.pchw = &gt_pch_nx_tree_node
 		},

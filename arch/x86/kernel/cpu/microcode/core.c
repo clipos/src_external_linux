@@ -418,9 +418,8 @@ static int do_microcode_update(const void __user *buf, size_t size)
 		if (ustate == UCODE_ERROR) {
 			error = -1;
 			break;
-		} else if (ustate == UCODE_NEW) {
+		} else if (ustate == UCODE_OK)
 			apply_microcode_on_target(cpu);
-		}
 	}
 
 	return error;
@@ -608,6 +607,8 @@ static int microcode_reload_late(void)
 	ret = stop_machine_cpuslocked(__reload_late, NULL, cpu_online_mask);
 	if (ret > 0)
 		microcode_check();
+
+	pr_info("Reload completed, microcode revision: 0x%x\n", boot_cpu_data.microcode);
 
 	return ret;
 }

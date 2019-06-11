@@ -10,12 +10,14 @@
 #include <linux/idr.h>
 #include <linux/nvmem-provider.h>
 #include <linux/pm_runtime.h>
-#include <linux/sched/signal.h>
 #include <linux/sizes.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 
 #include "tb.h"
+
+/* Switch authorization from userspace is serialized by this lock */
+static DEFINE_MUTEX(switch_lock);
 
 /* Switch NVM support */
 
@@ -252,8 +254,8 @@ static int tb_switch_nvm_write(void *priv, unsigned int offset, void *val,
 	struct tb_switch *sw = priv;
 	int ret = 0;
 
-	if (!mutex_trylock(&sw->tb->lock))
-		return restart_syscall();
+	if (mutex_lock_interruptible(&switch_lock))
+		return -ERESTARTSYS;
 
 	/*
 	 * Since writing the NVM image might require some special steps,
@@ -273,7 +275,7 @@ static int tb_switch_nvm_write(void *priv, unsigned int offset, void *val,
 	memcpy(sw->nvm->buf + offset, val, bytes);
 
 unlock:
-	mutex_unlock(&sw->tb->lock);
+	mutex_unlock(&switch_lock);
 
 	return ret;
 }
@@ -362,7 +364,10 @@ static int tb_switch_nvm_add(struct tb_switch *sw)
 	}
 	nvm->non_active = nvm_dev;
 
+	mutex_lock(&switch_lock);
 	sw->nvm = nvm;
+	mutex_unlock(&switch_lock);
+
 	return 0;
 
 err_nvm_active:
@@ -379,8 +384,10 @@ static void tb_switch_nvm_remove(struct tb_switch *sw)
 {
 	struct tb_switch_nvm *nvm;
 
+	mutex_lock(&switch_lock);
 	nvm = sw->nvm;
 	sw->nvm = NULL;
+	mutex_unlock(&switch_lock);
 
 	if (!nvm)
 		return;
@@ -709,8 +716,8 @@ static int tb_switch_set_authorized(struct tb_switch *sw, unsigned int val)
 {
 	int ret = -EINVAL;
 
-	if (!mutex_trylock(&sw->tb->lock))
-		return restart_syscall();
+	if (mutex_lock_interruptible(&switch_lock))
+		return -ERESTARTSYS;
 
 	if (sw->authorized)
 		goto unlock;
@@ -753,7 +760,7 @@ static int tb_switch_set_authorized(struct tb_switch *sw, unsigned int val)
 	}
 
 unlock:
-	mutex_unlock(&sw->tb->lock);
+	mutex_unlock(&switch_lock);
 	return ret;
 }
 
@@ -810,15 +817,15 @@ static ssize_t key_show(struct device *dev, struct device_attribute *attr,
 	struct tb_switch *sw = tb_to_switch(dev);
 	ssize_t ret;
 
-	if (!mutex_trylock(&sw->tb->lock))
-		return restart_syscall();
+	if (mutex_lock_interruptible(&switch_lock))
+		return -ERESTARTSYS;
 
 	if (sw->key)
 		ret = sprintf(buf, "%*phN\n", TB_SWITCH_KEY_SIZE, sw->key);
 	else
 		ret = sprintf(buf, "\n");
 
-	mutex_unlock(&sw->tb->lock);
+	mutex_unlock(&switch_lock);
 	return ret;
 }
 
@@ -835,8 +842,8 @@ static ssize_t key_store(struct device *dev, struct device_attribute *attr,
 	else if (hex2bin(key, buf, sizeof(key)))
 		return -EINVAL;
 
-	if (!mutex_trylock(&sw->tb->lock))
-		return restart_syscall();
+	if (mutex_lock_interruptible(&switch_lock))
+		return -ERESTARTSYS;
 
 	if (sw->authorized) {
 		ret = -EBUSY;
@@ -851,7 +858,7 @@ static ssize_t key_store(struct device *dev, struct device_attribute *attr,
 		}
 	}
 
-	mutex_unlock(&sw->tb->lock);
+	mutex_unlock(&switch_lock);
 	return ret;
 }
 static DEVICE_ATTR(key, 0600, key_show, key_store);
@@ -897,8 +904,8 @@ static ssize_t nvm_authenticate_store(struct device *dev,
 	bool val;
 	int ret;
 
-	if (!mutex_trylock(&sw->tb->lock))
-		return restart_syscall();
+	if (mutex_lock_interruptible(&switch_lock))
+		return -ERESTARTSYS;
 
 	/* If NVMem devices are not yet added */
 	if (!sw->nvm) {
@@ -946,7 +953,7 @@ static ssize_t nvm_authenticate_store(struct device *dev,
 	}
 
 exit_unlock:
-	mutex_unlock(&sw->tb->lock);
+	mutex_unlock(&switch_lock);
 
 	if (ret)
 		return ret;
@@ -960,8 +967,8 @@ static ssize_t nvm_version_show(struct device *dev,
 	struct tb_switch *sw = tb_to_switch(dev);
 	int ret;
 
-	if (!mutex_trylock(&sw->tb->lock))
-		return restart_syscall();
+	if (mutex_lock_interruptible(&switch_lock))
+		return -ERESTARTSYS;
 
 	if (sw->safe_mode)
 		ret = -ENODATA;
@@ -970,7 +977,7 @@ static ssize_t nvm_version_show(struct device *dev,
 	else
 		ret = sprintf(buf, "%x.%x\n", sw->nvm->major, sw->nvm->minor);
 
-	mutex_unlock(&sw->tb->lock);
+	mutex_unlock(&switch_lock);
 
 	return ret;
 }
@@ -1287,14 +1294,13 @@ int tb_switch_configure(struct tb_switch *sw)
 	return tb_plug_events_active(sw, true);
 }
 
-static int tb_switch_set_uuid(struct tb_switch *sw)
+static void tb_switch_set_uuid(struct tb_switch *sw)
 {
 	u32 uuid[4];
-	int cap, ret;
+	int cap;
 
-	ret = 0;
 	if (sw->uuid)
-		return ret;
+		return;
 
 	/*
 	 * The newer controllers include fused UUID as part of link
@@ -1302,9 +1308,7 @@ static int tb_switch_set_uuid(struct tb_switch *sw)
 	 */
 	cap = tb_switch_find_vse_cap(sw, TB_VSE_CAP_LINK_CONTROLLER);
 	if (cap > 0) {
-		ret = tb_sw_read(sw, uuid, TB_CFG_SWITCH, cap + 3, 4);
-		if (ret)
-			return ret;
+		tb_sw_read(sw, uuid, TB_CFG_SWITCH, cap + 3, 4);
 	} else {
 		/*
 		 * ICM generates UUID based on UID and fills the upper
@@ -1319,9 +1323,6 @@ static int tb_switch_set_uuid(struct tb_switch *sw)
 	}
 
 	sw->uuid = kmemdup(uuid, sizeof(uuid), GFP_KERNEL);
-	if (!sw->uuid)
-		ret = -ENOMEM;
-	return ret;
 }
 
 static int tb_switch_add_dma_port(struct tb_switch *sw)
@@ -1371,9 +1372,7 @@ static int tb_switch_add_dma_port(struct tb_switch *sw)
 
 	if (status) {
 		tb_sw_info(sw, "switch flash authentication failed\n");
-		ret = tb_switch_set_uuid(sw);
-		if (ret)
-			return ret;
+		tb_switch_set_uuid(sw);
 		nvm_set_auth_status(sw, status);
 	}
 
@@ -1423,9 +1422,7 @@ int tb_switch_add(struct tb_switch *sw)
 		}
 		tb_sw_dbg(sw, "uid: %#llx\n", sw->uid);
 
-		ret = tb_switch_set_uuid(sw);
-		if (ret)
-			return ret;
+		tb_switch_set_uuid(sw);
 
 		for (i = 0; i <= sw->config.max_port_number; i++) {
 			if (sw->ports[i].disabled) {

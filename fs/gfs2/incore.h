@@ -621,7 +621,6 @@ enum {
 	SDF_SKIP_DLM_UNLOCK	= 8,
 	SDF_FORCE_AIL_FLUSH     = 9,
 	SDF_AIL1_IO_ERROR	= 10,
-	SDF_FS_FROZEN           = 11,
 };
 
 enum gfs2_freeze_state {
@@ -854,9 +853,6 @@ struct gfs2_sbd {
 
 	unsigned long sd_last_warning;
 	struct dentry *debugfs_dir;    /* debugfs directory */
-	struct dentry *debugfs_dentry_glocks;
-	struct dentry *debugfs_dentry_glstats;
-	struct dentry *debugfs_dentry_sbstats;
 };
 
 static inline void gfs2_glstats_inc(struct gfs2_glock *gl, int which)

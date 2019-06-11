@@ -13,8 +13,6 @@
 
 #include <xen/interface/memory.h>
 
-#include "xen-ops.h"
-
 /*
  * PVH variables.
  *
@@ -23,20 +21,17 @@
  */
 bool xen_pvh __attribute__((section(".data"))) = 0;
 
-void __init xen_pvh_init(struct boot_params *boot_params)
+void __init xen_pvh_init(void)
 {
 	u32 msr;
 	u64 pfn;
 
 	xen_pvh = 1;
-	xen_domain_type = XEN_HVM_DOMAIN;
 	xen_start_flags = pvh_start_info.flags;
 
 	msr = cpuid_ebx(xen_cpuid_base() + 2);
 	pfn = __pa(hypercall_page);
 	wrmsr_safe(msr, (u32)pfn, (u32)(pfn >> 32));
-
-	xen_efi_init(boot_params);
 }
 
 void __init mem_map_via_hcall(struct boot_params *boot_params_p)

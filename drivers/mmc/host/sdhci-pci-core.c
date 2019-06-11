@@ -31,10 +31,6 @@
 #include <linux/mmc/sdhci-pci-data.h>
 #include <linux/acpi.h>
 
-#ifdef CONFIG_X86
-#include <asm/iosf_mbi.h>
-#endif
-
 #include "cqhci.h"
 
 #include "sdhci.h"
@@ -455,50 +451,6 @@ static const struct sdhci_pci_fixes sdhci_intel_pch_sdio = {
 	.probe_slot	= pch_hc_probe_slot,
 };
 
-#ifdef CONFIG_X86
-
-#define BYT_IOSF_SCCEP			0x63
-#define BYT_IOSF_OCP_NETCTRL0		0x1078
-#define BYT_IOSF_OCP_TIMEOUT_BASE	GENMASK(10, 8)
-
-static void byt_ocp_setting(struct pci_dev *pdev)
-{
-	u32 val = 0;
-
-	if (pdev->device != PCI_DEVICE_ID_INTEL_BYT_EMMC &&
-	    pdev->device != PCI_DEVICE_ID_INTEL_BYT_SDIO &&
-	    pdev->device != PCI_DEVICE_ID_INTEL_BYT_SD &&
-	    pdev->device != PCI_DEVICE_ID_INTEL_BYT_EMMC2)
-		return;
-
-	if (iosf_mbi_read(BYT_IOSF_SCCEP, MBI_CR_READ, BYT_IOSF_OCP_NETCTRL0,
-			  &val)) {
-		dev_err(&pdev->dev, "%s read error\n", __func__);
-		return;
-	}
-
-	if (!(val & BYT_IOSF_OCP_TIMEOUT_BASE))
-		return;
-
-	val &= ~BYT_IOSF_OCP_TIMEOUT_BASE;
-
-	if (iosf_mbi_write(BYT_IOSF_SCCEP, MBI_CR_WRITE, BYT_IOSF_OCP_NETCTRL0,
-			   val)) {
-		dev_err(&pdev->dev, "%s write error\n", __func__);
-		return;
-	}
-
-	dev_dbg(&pdev->dev, "%s completed\n", __func__);
-}
-
-#else
-
-static inline void byt_ocp_setting(struct pci_dev *pdev)
-{
-}
-
-#endif
-
 enum {
 	INTEL_DSM_FNS		=  0,
 	INTEL_DSM_V18_SWITCH	=  3,
@@ -763,8 +715,6 @@ static void byt_probe_slot(struct sdhci_pci_slot *slot)
 
 	byt_read_dsm(slot);
 
-	byt_ocp_setting(slot->chip->pdev);
-
 	ops->execute_tuning = intel_execute_tuning;
 	ops->start_signal_voltage_switch = intel_start_signal_voltage_switch;
 
@@ -988,35 +938,7 @@ static int byt_sd_probe_slot(struct sdhci_pci_slot *slot)
 	return 0;
 }
 
-#ifdef CONFIG_PM_SLEEP
-
-static int byt_resume(struct sdhci_pci_chip *chip)
-{
-	byt_ocp_setting(chip->pdev);
-
-	return sdhci_pci_resume_host(chip);
-}
-
-#endif
-
-#ifdef CONFIG_PM
-
-static int byt_runtime_resume(struct sdhci_pci_chip *chip)
-{
-	byt_ocp_setting(chip->pdev);
-
-	return sdhci_pci_runtime_resume_host(chip);
-}
-
-#endif
-
 static const struct sdhci_pci_fixes sdhci_intel_byt_emmc = {
-#ifdef CONFIG_PM_SLEEP
-	.resume		= byt_resume,
-#endif
-#ifdef CONFIG_PM
-	.runtime_resume	= byt_runtime_resume,
-#endif
 	.allow_runtime_pm = true,
 	.probe_slot	= byt_emmc_probe_slot,
 	.quirks		= SDHCI_QUIRK_NO_ENDATTR_IN_NOPDESC |
@@ -1050,12 +972,6 @@ static const struct sdhci_pci_fixes sdhci_intel_glk_emmc = {
 };
 
 static const struct sdhci_pci_fixes sdhci_ni_byt_sdio = {
-#ifdef CONFIG_PM_SLEEP
-	.resume		= byt_resume,
-#endif
-#ifdef CONFIG_PM
-	.runtime_resume	= byt_runtime_resume,
-#endif
 	.quirks		= SDHCI_QUIRK_NO_ENDATTR_IN_NOPDESC |
 			  SDHCI_QUIRK_NO_LED,
 	.quirks2	= SDHCI_QUIRK2_HOST_OFF_CARD_ON |
@@ -1067,12 +983,6 @@ static const struct sdhci_pci_fixes sdhci_ni_byt_sdio = {
 };
 
 static const struct sdhci_pci_fixes sdhci_intel_byt_sdio = {
-#ifdef CONFIG_PM_SLEEP
-	.resume		= byt_resume,
-#endif
-#ifdef CONFIG_PM
-	.runtime_resume	= byt_runtime_resume,
-#endif
 	.quirks		= SDHCI_QUIRK_NO_ENDATTR_IN_NOPDESC |
 			  SDHCI_QUIRK_NO_LED,
 	.quirks2	= SDHCI_QUIRK2_HOST_OFF_CARD_ON |
@@ -1084,12 +994,6 @@ static const struct sdhci_pci_fixes sdhci_intel_byt_sdio = {
 };
 
 static const struct sdhci_pci_fixes sdhci_intel_byt_sd = {
-#ifdef CONFIG_PM_SLEEP
-	.resume		= byt_resume,
-#endif
-#ifdef CONFIG_PM
-	.runtime_resume	= byt_runtime_resume,
-#endif
 	.quirks		= SDHCI_QUIRK_NO_ENDATTR_IN_NOPDESC |
 			  SDHCI_QUIRK_NO_LED,
 	.quirks2	= SDHCI_QUIRK2_CARD_ON_NEEDS_BUS_ON |
@@ -1352,16 +1256,6 @@ static int jmicron_resume(struct sdhci_pci_chip *chip)
 	return sdhci_pci_resume_host(chip);
 }
 #endif
-
-static const struct sdhci_pci_fixes sdhci_o2 = {
-	.probe = sdhci_pci_o2_probe,
-	.quirks = SDHCI_QUIRK_NO_ENDATTR_IN_NOPDESC,
-	.quirks2 = SDHCI_QUIRK2_CLEAR_TRANSFERMODE_REG_BEFORE_CMD,
-	.probe_slot = sdhci_pci_o2_probe_slot,
-#ifdef CONFIG_PM_SLEEP
-	.resume = sdhci_pci_o2_resume,
-#endif
-};
 
 static const struct sdhci_pci_fixes sdhci_jmicron = {
 	.probe		= jmicron_probe,

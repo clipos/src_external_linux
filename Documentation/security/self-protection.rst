@@ -165,15 +165,10 @@ Stack depth overflow
 A less well understood attack is using a bug that triggers the
 kernel to consume stack memory with deep function calls or large stack
 allocations. With this attack it is possible to write beyond the end of
-the kernel's preallocated stack space and into sensitive structures.
-The combination of the following measures gives better protection:
-
-* moving the sensitive thread_info structure off the stack
-  (``CONFIG_THREAD_INFO_IN_TASK``);
-* adding a faulting memory hole at the bottom of the stack to catch
-  these overflows (``CONFIG_VMAP_STACK``);
-* runtime checking that alloca() calls don't overstep the stack boundary
-  (``CONFIG_GCC_PLUGIN_STACKLEAK``).
+the kernel's preallocated stack space and into sensitive structures. Two
+important changes need to be made for better protections: moving the
+sensitive thread_info structure elsewhere, and adding a faulting memory
+hole at the bottom of the stack to catch these overflows.
 
 Heap memory integrity
 ---------------------

@@ -13,7 +13,7 @@
 
 #include "trace_probe.h"
 
-const char *reserved_field_names[] = {
+static const char *reserved_field_names[] = {
 	"common_type",
 	"common_flags",
 	"common_preempt_count",
@@ -159,6 +159,7 @@ int traceprobe_parse_event_name(const char **pevent, const char **pgroup,
 				char *buf)
 {
 	const char *slash, *event = *pevent;
+	int len;
 
 	slash = strchr(event, '/');
 	if (slash) {
@@ -171,11 +172,24 @@ int traceprobe_parse_event_name(const char **pevent, const char **pgroup,
 			return -E2BIG;
 		}
 		strlcpy(buf, event, slash - event + 1);
+		if (!is_good_name(buf)) {
+			pr_info("Group name must follow the same rules as C identifiers\n");
+			return -EINVAL;
+		}
 		*pgroup = buf;
 		*pevent = slash + 1;
+		event = *pevent;
 	}
-	if (strlen(event) == 0) {
+	len = strlen(event);
+	if (len == 0) {
 		pr_info("Event name is not specified\n");
+		return -EINVAL;
+	} else if (len > MAX_EVENT_NAME_LEN) {
+		pr_info("Event name is too long\n");
+		return -E2BIG;
+	}
+	if (!is_good_name(event)) {
+		pr_info("Event name must follow the same rules as C identifiers\n");
 		return -EINVAL;
 	}
 	return 0;
@@ -300,6 +314,7 @@ parse_probe_arg(char *arg, const struct fetch_type *type,
 
 	case '+':	/* deref memory */
 		arg++;	/* Skip '+', because kstrtol() rejects it. */
+		/* fall through */
 	case '-':
 		tmp = strchr(arg, '(');
 		if (!tmp)
@@ -405,14 +420,13 @@ static int traceprobe_parse_probe_arg_body(char *arg, ssize_t *size,
 				return -E2BIG;
 		}
 	}
-
-	/* Since $comm can not be dereferred, we can find $comm by strcmp */
-	if (strcmp(arg, "$comm") == 0) {
-		/* The type of $comm must be "string", and not an array. */
-		if (parg->count || (t && strcmp(t, "string")))
-			return -EINVAL;
+	/*
+	 * The default type of $comm should be "string", and it can't be
+	 * dereferenced.
+	 */
+	if (!t && strcmp(arg, "$comm") == 0)
 		parg->type = find_fetch_type("string");
-	} else
+	else
 		parg->type = find_fetch_type(t);
 	if (!parg->type) {
 		pr_info("Unsupported type: %s\n", t);
@@ -548,6 +562,8 @@ int traceprobe_parse_probe_arg(struct trace_probe *tp, int i, char *arg,
 
 	body = strchr(arg, '=');
 	if (body) {
+		if (body - arg > MAX_ARG_NAME_LEN || body == arg)
+			return -EINVAL;
 		parg->name = kmemdup_nul(arg, body - arg, GFP_KERNEL);
 		body++;
 	} else {

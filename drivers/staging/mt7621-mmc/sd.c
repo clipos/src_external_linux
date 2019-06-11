@@ -468,11 +468,7 @@ static unsigned int msdc_command_start(struct msdc_host   *host,
 	host->cmd     = cmd;
 	host->cmd_rsp = resp;
 
-	// The completion should have been consumed by the previous command
-	// response handler, because the mmc requests should be serialized
-	if (completion_done(&host->cmd_done))
-		dev_err(mmc_dev(host->mmc),
-			"previous command was not handled\n");
+	init_completion(&host->cmd_done);
 
 	sdr_set_bits(host->base + MSDC_INTEN, wints);
 	sdc_send_cmd(rawcmd, cmd->arg);
@@ -494,6 +490,7 @@ static unsigned int msdc_command_resp(struct msdc_host   *host,
 		    MSDC_INT_ACMD19_DONE;
 
 	BUG_ON(in_interrupt());
+	//init_completion(&host->cmd_done);
 	//sdr_set_bits(host->base + MSDC_INTEN, wints);
 
 	spin_unlock(&host->lock);
@@ -596,6 +593,8 @@ static void msdc_dma_setup(struct msdc_host *host, struct msdc_dma *dma,
 	struct bd *bd;
 	u32 j;
 
+	BUG_ON(sglen > MAX_BD_NUM); /* not support currently */
+
 	gpd = dma->gpd;
 	bd  = dma->bd;
 
@@ -675,13 +674,7 @@ static int msdc_do_request(struct mmc_host *mmc, struct mmc_request *mrq)
 		//msdc_clr_fifo(host);  /* no need */
 
 		msdc_dma_on();  /* enable DMA mode first!! */
-
-		// The completion should have been consumed by the previous
-		// xfer response handler, because the mmc requests should be
-		// serialized
-		if (completion_done(&host->cmd_done))
-			dev_err(mmc_dev(host->mmc),
-				"previous transfer was not handled\n");
+		init_completion(&host->xfer_done);
 
 		/* start the command first*/
 		if (msdc_command_start(host, cmd, CMD_TIMEOUT) != 0)
@@ -690,13 +683,6 @@ static int msdc_do_request(struct mmc_host *mmc, struct mmc_request *mrq)
 		data->sg_count = dma_map_sg(mmc_dev(mmc), data->sg,
 					    data->sg_len,
 					    mmc_get_dma_dir(data));
-
-		if (data->sg_count == 0) {
-			dev_err(mmc_dev(host->mmc), "failed to map DMA for transfer\n");
-			data->error = -ENOMEM;
-			goto done;
-		}
-
 		msdc_dma_setup(host, &host->dma, data->sg,
 			       data->sg_count);
 
@@ -707,6 +693,7 @@ static int msdc_do_request(struct mmc_host *mmc, struct mmc_request *mrq)
 		/* for read, the data coming too fast, then CRC error
 		 *  start DMA no business with CRC.
 		 */
+		//init_completion(&host->xfer_done);
 		msdc_dma_start(host);
 
 		spin_unlock(&host->lock);
@@ -1701,8 +1688,6 @@ static int msdc_drv_probe(struct platform_device *pdev)
 	}
 	msdc_init_gpd_bd(host, &host->dma);
 
-	init_completion(&host->cmd_done);
-	init_completion(&host->xfer_done);
 	INIT_DELAYED_WORK(&host->card_delaywork, msdc_tasklet_card);
 	spin_lock_init(&host->lock);
 	msdc_init_hw(host);

@@ -116,10 +116,11 @@ static int ovl_real_fdget(const struct file *file, struct fd *real)
 
 static int ovl_open(struct inode *inode, struct file *file)
 {
+	struct dentry *dentry = file_dentry(file);
 	struct file *realfile;
 	int err;
 
-	err = ovl_maybe_copy_up(file_dentry(file), file->f_flags);
+	err = ovl_open_maybe_copy_up(dentry, file->f_flags);
 	if (err)
 		return err;
 
@@ -389,7 +390,7 @@ static long ovl_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		if (ret)
 			return ret;
 
-		ret = ovl_maybe_copy_up(file_dentry(file), O_WRONLY);
+		ret = ovl_copy_up_with_data(file_dentry(file));
 		if (!ret) {
 			ret = ovl_real_ioctl(file, cmd, arg);
 

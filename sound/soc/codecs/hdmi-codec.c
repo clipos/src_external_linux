@@ -439,12 +439,8 @@ static int hdmi_codec_startup(struct snd_pcm_substream *substream,
 		if (!ret) {
 			ret = snd_pcm_hw_constraint_eld(substream->runtime,
 							hcp->eld);
-			if (ret) {
-				mutex_lock(&hcp->current_stream_lock);
-				hcp->current_stream = NULL;
-				mutex_unlock(&hcp->current_stream_lock);
+			if (ret)
 				return ret;
-			}
 		}
 		/* Select chmap supported */
 		hdmi_codec_eld_chmap(hcp);
@@ -487,9 +483,6 @@ static int hdmi_codec_hw_params(struct snd_pcm_substream *substream,
 	dev_dbg(dai->dev, "%s() width %d rate %d channels %d\n", __func__,
 		params_width(params), params_rate(params),
 		params_channels(params));
-
-	if (params_width(params) > 24)
-		params->msbits = 24;
 
 	ret = snd_pcm_create_iec958_consumer_hw_params(params, hp.iec.status,
 						       sizeof(hp.iec.status));

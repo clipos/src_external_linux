@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2018 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2019 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -1430,7 +1430,7 @@ lpfc_vport_symbolic_port_name(struct lpfc_vport *vport, char *symbol,
 	 * Name object.  NPIV is not in play so this integer
 	 * value is sufficient and unique per FC-ID.
 	 */
-	n = scnprintf(symbol, size, "%d", vport->phba->brd_no);
+	n = snprintf(symbol, size, "%d", vport->phba->brd_no);
 	return n;
 }
 
@@ -1444,26 +1444,26 @@ lpfc_vport_symbolic_node_name(struct lpfc_vport *vport, char *symbol,
 
 	lpfc_decode_firmware_rev(vport->phba, fwrev, 0);
 
-	n = scnprintf(symbol, size, "Emulex %s", vport->phba->ModelName);
+	n = snprintf(symbol, size, "Emulex %s", vport->phba->ModelName);
 	if (size < n)
 		return n;
 
-	n += scnprintf(symbol + n, size - n, " FV%s", fwrev);
+	n += snprintf(symbol + n, size - n, " FV%s", fwrev);
 	if (size < n)
 		return n;
 
-	n += scnprintf(symbol + n, size - n, " DV%s.",
+	n += snprintf(symbol + n, size - n, " DV%s.",
 		      lpfc_release_version);
 	if (size < n)
 		return n;
 
-	n += scnprintf(symbol + n, size - n, " HN:%s.",
+	n += snprintf(symbol + n, size - n, " HN:%s.",
 		      init_utsname()->nodename);
 	if (size < n)
 		return n;
 
 	/* Note :- OS name is "Linux" */
-	n += scnprintf(symbol + n, size - n, " OS:%s\n",
+	n += snprintf(symbol + n, size - n, " OS:%s\n",
 		      init_utsname()->sysname);
 	return n;
 }
@@ -1656,16 +1656,16 @@ lpfc_ns_cmd(struct lpfc_vport *vport, int cmdcode,
 		CtReq->un.rft.PortId = cpu_to_be32(vport->fc_myDID);
 
 		/* Register FC4 FCP type if enabled.  */
-		if ((phba->cfg_enable_fc4_type == LPFC_ENABLE_BOTH) ||
-		    (phba->cfg_enable_fc4_type == LPFC_ENABLE_FCP))
+		if (vport->cfg_enable_fc4_type == LPFC_ENABLE_BOTH ||
+		    vport->cfg_enable_fc4_type == LPFC_ENABLE_FCP)
 			CtReq->un.rft.fcpReg = 1;
 
 		/* Register NVME type if enabled.  Defined LE and swapped.
 		 * rsvd[0] is used as word1 because of the hard-coded
 		 * word0 usage in the ct_request data structure.
 		 */
-		if ((phba->cfg_enable_fc4_type == LPFC_ENABLE_BOTH) ||
-		    (phba->cfg_enable_fc4_type == LPFC_ENABLE_NVME))
+		if (vport->cfg_enable_fc4_type == LPFC_ENABLE_BOTH ||
+		    vport->cfg_enable_fc4_type == LPFC_ENABLE_NVME)
 			CtReq->un.rft.rsvd[0] =
 				cpu_to_be32(LPFC_FC4_TYPE_BITMASK);
 
@@ -1732,8 +1732,8 @@ lpfc_ns_cmd(struct lpfc_vport *vport, int cmdcode,
 		 * caller can specify NVME (type x28) as well.  But only
 		 * these that FC4 type is supported.
 		 */
-		if (((phba->cfg_enable_fc4_type == LPFC_ENABLE_BOTH) ||
-		     (phba->cfg_enable_fc4_type == LPFC_ENABLE_NVME)) &&
+		if (((vport->cfg_enable_fc4_type == LPFC_ENABLE_BOTH) ||
+		     (vport->cfg_enable_fc4_type == LPFC_ENABLE_NVME)) &&
 		    (context == FC_TYPE_NVME)) {
 			if ((vport == phba->pport) && phba->nvmet_support) {
 				CtReq->un.rff.fbits = (FC4_FEATURE_TARGET |
@@ -1744,8 +1744,8 @@ lpfc_ns_cmd(struct lpfc_vport *vport, int cmdcode,
 			}
 			CtReq->un.rff.type_code = context;
 
-		} else if (((phba->cfg_enable_fc4_type == LPFC_ENABLE_BOTH) ||
-			    (phba->cfg_enable_fc4_type == LPFC_ENABLE_FCP)) &&
+		} else if (((vport->cfg_enable_fc4_type == LPFC_ENABLE_BOTH) ||
+			    (vport->cfg_enable_fc4_type == LPFC_ENABLE_FCP)) &&
 			   (context == FC_TYPE_FCP))
 			CtReq->un.rff.type_code = context;
 
@@ -2005,11 +2005,8 @@ lpfc_fdmi_hba_attr_manufacturer(struct lpfc_vport *vport,
 	ae = (struct lpfc_fdmi_attr_entry *)&ad->AttrValue;
 	memset(ae, 0, 256);
 
-	/* This string MUST be consistent with other FC platforms
-	 * supported by Broadcom.
-	 */
 	strncpy(ae->un.AttrString,
-		"Emulex Corporation",
+		"Broadcom Inc.",
 		       sizeof(ae->un.AttrString));
 	len = strnlen(ae->un.AttrString,
 			  sizeof(ae->un.AttrString));
@@ -2363,11 +2360,10 @@ lpfc_fdmi_port_attr_fc4type(struct lpfc_vport *vport,
 	ae = (struct lpfc_fdmi_attr_entry *)&ad->AttrValue;
 	memset(ae, 0, 32);
 
-	ae->un.AttrTypes[3] = 0x02; /* Type 0x1 - ELS */
-	ae->un.AttrTypes[2] = 0x01; /* Type 0x8 - FCP */
-	if (vport->nvmei_support || vport->phba->nvmet_support)
-		ae->un.AttrTypes[6] = 0x01; /* Type 0x28 - NVME */
-	ae->un.AttrTypes[7] = 0x01; /* Type 0x20 - CT */
+	ae->un.AttrTypes[3] = 0x02; /* Type 1 - ELS */
+	ae->un.AttrTypes[2] = 0x01; /* Type 8 - FCP */
+	ae->un.AttrTypes[6] = 0x01; /* Type 40 - NVME */
+	ae->un.AttrTypes[7] = 0x01; /* Type 32 - CT */
 	size = FOURBYTES + 32;
 	ad->AttrLen = cpu_to_be16(size);
 	ad->AttrType = cpu_to_be16(RPRT_SUPPORTED_FC4_TYPES);
@@ -2677,11 +2673,9 @@ lpfc_fdmi_port_attr_active_fc4type(struct lpfc_vport *vport,
 	ae = (struct lpfc_fdmi_attr_entry *)&ad->AttrValue;
 	memset(ae, 0, 32);
 
-	ae->un.AttrTypes[3] = 0x02; /* Type 0x1 - ELS */
-	ae->un.AttrTypes[2] = 0x01; /* Type 0x8 - FCP */
-	if (vport->phba->cfg_enable_fc4_type & LPFC_ENABLE_NVME)
-		ae->un.AttrTypes[6] = 0x1; /* Type 0x28 - NVME */
-	ae->un.AttrTypes[7] = 0x01; /* Type 0x20 - CT */
+	ae->un.AttrTypes[3] = 0x02; /* Type 1 - ELS */
+	ae->un.AttrTypes[2] = 0x01; /* Type 8 - FCP */
+	ae->un.AttrTypes[7] = 0x01; /* Type 32 - CT */
 	size = FOURBYTES + 32;
 	ad->AttrLen = cpu_to_be16(size);
 	ad->AttrType = cpu_to_be16(RPRT_ACTIVE_FC4_TYPES);

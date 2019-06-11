@@ -142,22 +142,6 @@ static __be32 jbd2_superblock_csum(journal_t *j, journal_superblock_t *sb)
 	return cpu_to_be32(csum);
 }
 
-static int jbd2_superblock_csum_verify(journal_t *j, journal_superblock_t *sb)
-{
-	if (!jbd2_journal_has_csum_v2or3(j))
-		return 1;
-
-	return sb->s_checksum == jbd2_superblock_csum(j, sb);
-}
-
-static void jbd2_superblock_csum_set(journal_t *j, journal_superblock_t *sb)
-{
-	if (!jbd2_journal_has_csum_v2or3(j))
-		return;
-
-	sb->s_checksum = jbd2_superblock_csum(j, sb);
-}
-
 /*
  * Helper function used to manage commit timeouts
  */
@@ -1366,10 +1350,6 @@ static int jbd2_write_superblock(journal_t *journal, int write_flags)
 	journal_superblock_t *sb = journal->j_superblock;
 	int ret;
 
-	/* Buffer got discarded which means block device got invalidated */
-	if (!buffer_mapped(bh))
-		return -EIO;
-
 	trace_jbd2_write_superblock(journal, write_flags);
 	if (!(journal->j_flags & JBD2_BARRIER))
 		write_flags &= ~(REQ_FUA | REQ_PREFLUSH);
@@ -1388,7 +1368,8 @@ static int jbd2_write_superblock(journal_t *journal, int write_flags)
 		clear_buffer_write_io_error(bh);
 		set_buffer_uptodate(bh);
 	}
-	jbd2_superblock_csum_set(journal, sb);
+	if (jbd2_journal_has_csum_v2or3(journal))
+		sb->s_checksum = jbd2_superblock_csum(journal, sb);
 	get_bh(bh);
 	bh->b_end_io = end_buffer_write_sync;
 	ret = submit_bh(REQ_OP_WRITE, write_flags, bh);
@@ -1601,17 +1582,18 @@ static int journal_get_superblock(journal_t *journal)
 		}
 	}
 
-	/* Check superblock checksum */
-	if (!jbd2_superblock_csum_verify(journal, sb)) {
-		printk(KERN_ERR "JBD2: journal checksum error\n");
-		err = -EFSBADCRC;
-		goto out;
-	}
+	if (jbd2_journal_has_csum_v2or3(journal)) {
+		/* Check superblock checksum */
+		if (sb->s_checksum != jbd2_superblock_csum(journal, sb)) {
+			printk(KERN_ERR "JBD2: journal checksum error\n");
+			err = -EFSBADCRC;
+			goto out;
+		}
 
-	/* Precompute checksum seed for all metadata */
-	if (jbd2_journal_has_csum_v2or3(journal))
+		/* Precompute checksum seed for all metadata */
 		journal->j_csum_seed = jbd2_chksum(journal, ~0, sb->s_uuid,
 						   sizeof(sb->s_uuid));
+	}
 
 	set_buffer_verified(bh);
 
@@ -2073,7 +2055,7 @@ int jbd2_journal_wipe(journal_t *journal, int write)
 	err = jbd2_journal_skip_recovery(journal);
 	if (write) {
 		/* Lock to make assertions happy... */
-		mutex_lock(&journal->j_checkpoint_mutex);
+		mutex_lock_io(&journal->j_checkpoint_mutex);
 		jbd2_mark_journal_empty(journal, REQ_SYNC | REQ_FUA);
 		mutex_unlock(&journal->j_checkpoint_mutex);
 	}
@@ -2389,19 +2371,22 @@ static struct kmem_cache *jbd2_journal_head_cache;
 static atomic_t nr_journal_heads = ATOMIC_INIT(0);
 #endif
 
-static int __init jbd2_journal_init_journal_head_cache(void)
+static int jbd2_journal_init_journal_head_cache(void)
 {
-	J_ASSERT(!jbd2_journal_head_cache);
+	int retval;
+
+	J_ASSERT(jbd2_journal_head_cache == NULL);
 	jbd2_journal_head_cache = kmem_cache_create("jbd2_journal_head",
 				sizeof(struct journal_head),
 				0,		/* offset */
 				SLAB_TEMPORARY | SLAB_TYPESAFE_BY_RCU,
 				NULL);		/* ctor */
+	retval = 0;
 	if (!jbd2_journal_head_cache) {
+		retval = -ENOMEM;
 		printk(KERN_EMERG "JBD2: no memory for journal_head cache\n");
-		return -ENOMEM;
 	}
-	return 0;
+	return retval;
 }
 
 static void jbd2_journal_destroy_journal_head_cache(void)
@@ -2647,38 +2632,28 @@ static void __exit jbd2_remove_jbd_stats_proc_entry(void)
 
 struct kmem_cache *jbd2_handle_cache, *jbd2_inode_cache;
 
-static int __init jbd2_journal_init_inode_cache(void)
-{
-	J_ASSERT(!jbd2_inode_cache);
-	jbd2_inode_cache = KMEM_CACHE(jbd2_inode, 0);
-	if (!jbd2_inode_cache) {
-		pr_emerg("JBD2: failed to create inode cache\n");
-		return -ENOMEM;
-	}
-	return 0;
-}
-
 static int __init jbd2_journal_init_handle_cache(void)
 {
-	J_ASSERT(!jbd2_handle_cache);
 	jbd2_handle_cache = KMEM_CACHE(jbd2_journal_handle, SLAB_TEMPORARY);
-	if (!jbd2_handle_cache) {
+	if (jbd2_handle_cache == NULL) {
 		printk(KERN_EMERG "JBD2: failed to create handle cache\n");
 		return -ENOMEM;
 	}
+	jbd2_inode_cache = KMEM_CACHE(jbd2_inode, 0);
+	if (jbd2_inode_cache == NULL) {
+		printk(KERN_EMERG "JBD2: failed to create inode cache\n");
+		kmem_cache_destroy(jbd2_handle_cache);
+		return -ENOMEM;
+	}
 	return 0;
-}
-
-static void jbd2_journal_destroy_inode_cache(void)
-{
-	kmem_cache_destroy(jbd2_inode_cache);
-	jbd2_inode_cache = NULL;
 }
 
 static void jbd2_journal_destroy_handle_cache(void)
 {
 	kmem_cache_destroy(jbd2_handle_cache);
 	jbd2_handle_cache = NULL;
+	kmem_cache_destroy(jbd2_inode_cache);
+	jbd2_inode_cache = NULL;
 }
 
 /*
@@ -2689,15 +2664,11 @@ static int __init journal_init_caches(void)
 {
 	int ret;
 
-	ret = jbd2_journal_init_revoke_record_cache();
-	if (ret == 0)
-		ret = jbd2_journal_init_revoke_table_cache();
+	ret = jbd2_journal_init_revoke_caches();
 	if (ret == 0)
 		ret = jbd2_journal_init_journal_head_cache();
 	if (ret == 0)
 		ret = jbd2_journal_init_handle_cache();
-	if (ret == 0)
-		ret = jbd2_journal_init_inode_cache();
 	if (ret == 0)
 		ret = jbd2_journal_init_transaction_cache();
 	return ret;
@@ -2705,11 +2676,9 @@ static int __init journal_init_caches(void)
 
 static void jbd2_journal_destroy_caches(void)
 {
-	jbd2_journal_destroy_revoke_record_cache();
-	jbd2_journal_destroy_revoke_table_cache();
+	jbd2_journal_destroy_revoke_caches();
 	jbd2_journal_destroy_journal_head_cache();
 	jbd2_journal_destroy_handle_cache();
-	jbd2_journal_destroy_inode_cache();
 	jbd2_journal_destroy_transaction_cache();
 	jbd2_journal_destroy_slabs();
 }

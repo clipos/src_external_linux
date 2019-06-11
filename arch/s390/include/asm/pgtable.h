@@ -1069,8 +1069,9 @@ static inline pte_t ptep_get_and_clear(struct mm_struct *mm,
 }
 
 #define __HAVE_ARCH_PTEP_MODIFY_PROT_TRANSACTION
-pte_t ptep_modify_prot_start(struct mm_struct *, unsigned long, pte_t *);
-void ptep_modify_prot_commit(struct mm_struct *, unsigned long, pte_t *, pte_t);
+pte_t ptep_modify_prot_start(struct vm_area_struct *, unsigned long, pte_t *);
+void ptep_modify_prot_commit(struct vm_area_struct *, unsigned long,
+			     pte_t *, pte_t, pte_t);
 
 #define __HAVE_ARCH_PTEP_CLEAR_FLUSH
 static inline pte_t ptep_clear_flush(struct vm_area_struct *vma,
@@ -1203,78 +1204,41 @@ static inline pte_t mk_pte(struct page *page, pgprot_t pgprot)
 #define pmd_index(address) (((address) >> PMD_SHIFT) & (PTRS_PER_PMD-1))
 #define pte_index(address) (((address) >> PAGE_SHIFT) & (PTRS_PER_PTE-1))
 
+#define pgd_offset(mm, address) ((mm)->pgd + pgd_index(address))
+#define pgd_offset_k(address) pgd_offset(&init_mm, address)
+#define pgd_offset_raw(pgd, addr) ((pgd) + pgd_index(addr))
+
 #define pmd_deref(pmd) (pmd_val(pmd) & _SEGMENT_ENTRY_ORIGIN)
 #define pud_deref(pud) (pud_val(pud) & _REGION_ENTRY_ORIGIN)
 #define p4d_deref(pud) (p4d_val(pud) & _REGION_ENTRY_ORIGIN)
 #define pgd_deref(pgd) (pgd_val(pgd) & _REGION_ENTRY_ORIGIN)
 
-/*
- * The pgd_offset function *always* adds the index for the top-level
- * region/segment table. This is done to get a sequence like the
- * following to work:
- *	pgdp = pgd_offset(current->mm, addr);
- *	pgd = READ_ONCE(*pgdp);
- *	p4dp = p4d_offset(&pgd, addr);
- *	...
- * The subsequent p4d_offset, pud_offset and pmd_offset functions
- * only add an index if they dereferenced the pointer.
- */
-static inline pgd_t *pgd_offset_raw(pgd_t *pgd, unsigned long address)
-{
-	unsigned long rste;
-	unsigned int shift;
-
-	/* Get the first entry of the top level table */
-	rste = pgd_val(*pgd);
-	/* Pick up the shift from the table type of the first entry */
-	shift = ((rste & _REGION_ENTRY_TYPE_MASK) >> 2) * 11 + 20;
-	return pgd + ((address >> shift) & (PTRS_PER_PGD - 1));
-}
-
-#define pgd_offset(mm, address) pgd_offset_raw(READ_ONCE((mm)->pgd), address)
-#define pgd_offset_k(address) pgd_offset(&init_mm, address)
-
 static inline p4d_t *p4d_offset(pgd_t *pgd, unsigned long address)
 {
-	if ((pgd_val(*pgd) & _REGION_ENTRY_TYPE_MASK) >= _REGION_ENTRY_TYPE_R1)
-		return (p4d_t *) pgd_deref(*pgd) + p4d_index(address);
-	return (p4d_t *) pgd;
+	p4d_t *p4d = (p4d_t *) pgd;
+
+	if ((pgd_val(*pgd) & _REGION_ENTRY_TYPE_MASK) == _REGION_ENTRY_TYPE_R1)
+		p4d = (p4d_t *) pgd_deref(*pgd);
+	return p4d + p4d_index(address);
 }
 
 static inline pud_t *pud_offset(p4d_t *p4d, unsigned long address)
 {
-	if ((p4d_val(*p4d) & _REGION_ENTRY_TYPE_MASK) >= _REGION_ENTRY_TYPE_R2)
-		return (pud_t *) p4d_deref(*p4d) + pud_index(address);
-	return (pud_t *) p4d;
+	pud_t *pud = (pud_t *) p4d;
+
+	if ((p4d_val(*p4d) & _REGION_ENTRY_TYPE_MASK) == _REGION_ENTRY_TYPE_R2)
+		pud = (pud_t *) p4d_deref(*p4d);
+	return pud + pud_index(address);
 }
 
 static inline pmd_t *pmd_offset(pud_t *pud, unsigned long address)
 {
-	if ((pud_val(*pud) & _REGION_ENTRY_TYPE_MASK) >= _REGION_ENTRY_TYPE_R3)
-		return (pmd_t *) pud_deref(*pud) + pmd_index(address);
-	return (pmd_t *) pud;
+	pmd_t *pmd = (pmd_t *) pud;
+
+	if ((pud_val(*pud) & _REGION_ENTRY_TYPE_MASK) == _REGION_ENTRY_TYPE_R3)
+		pmd = (pmd_t *) pud_deref(*pud);
+	return pmd + pmd_index(address);
 }
-
-static inline pte_t *pte_offset(pmd_t *pmd, unsigned long address)
-{
-	return (pte_t *) pmd_deref(*pmd) + pte_index(address);
-}
-
-#define pte_offset_kernel(pmd, address) pte_offset(pmd, address)
-#define pte_offset_map(pmd, address) pte_offset_kernel(pmd, address)
-#define pte_unmap(pte) do { } while (0)
-
-static inline bool gup_fast_permitted(unsigned long start, int nr_pages)
-{
-	unsigned long len, end;
-
-	len = (unsigned long) nr_pages << PAGE_SHIFT;
-	end = start + len;
-	if (end < start)
-		return false;
-	return end <= current->mm->context.asce_limit;
-}
-#define gup_fast_permitted gup_fast_permitted
 
 #define pfn_pte(pfn,pgprot) mk_pte_phys(__pa((pfn) << PAGE_SHIFT),(pgprot))
 #define pte_pfn(x) (pte_val(x) >> PAGE_SHIFT)
@@ -1284,6 +1248,12 @@ static inline bool gup_fast_permitted(unsigned long start, int nr_pages)
 #define pud_page(pud) pfn_to_page(pud_pfn(pud))
 #define p4d_page(p4d) pfn_to_page(p4d_pfn(p4d))
 #define pgd_page(pgd) pfn_to_page(pgd_pfn(pgd))
+
+/* Find an entry in the lowest level page table.. */
+#define pte_offset(pmd, addr) ((pte_t *) pmd_deref(*(pmd)) + pte_index(addr))
+#define pte_offset_kernel(pmd, address) pte_offset(pmd,address)
+#define pte_offset_map(pmd, address) pte_offset_kernel(pmd, address)
+#define pte_unmap(pte) do { } while (0)
 
 static inline pmd_t pmd_wrprotect(pmd_t pmd)
 {

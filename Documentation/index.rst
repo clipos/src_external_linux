@@ -90,6 +90,7 @@ needed).
    filesystems/index
    vm/index
    bpf/index
+   misc-devices/index
 
 Architecture-specific documentation
 -----------------------------------
@@ -101,7 +102,6 @@ implementation.
    :maxdepth: 2
 
    sh/index
-   x86/index
 
 Filesystem Documentation
 ------------------------

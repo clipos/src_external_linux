@@ -228,15 +228,9 @@ static int bcm_gpio_set_power(struct bcm_device *dev, bool powered)
 	int err;
 
 	if (powered && !dev->res_enabled) {
-		/* Intel Macs use bcm_apple_get_resources() and don't
-		 * have regulator supplies configured.
-		 */
-		if (dev->supplies[0].supply) {
-			err = regulator_bulk_enable(BCM_NUM_SUPPLIES,
-						    dev->supplies);
-			if (err)
-				return err;
-		}
+		err = regulator_bulk_enable(BCM_NUM_SUPPLIES, dev->supplies);
+		if (err)
+			return err;
 
 		/* LPO clock needs to be 32.768 kHz */
 		err = clk_set_rate(dev->lpo_clk, 32768);
@@ -265,13 +259,7 @@ static int bcm_gpio_set_power(struct bcm_device *dev, bool powered)
 	if (!powered && dev->res_enabled) {
 		clk_disable_unprepare(dev->txco_clk);
 		clk_disable_unprepare(dev->lpo_clk);
-
-		/* Intel Macs use bcm_apple_get_resources() and don't
-		 * have regulator supplies configured.
-		 */
-		if (dev->supplies[0].supply)
-			regulator_bulk_disable(BCM_NUM_SUPPLIES,
-					       dev->supplies);
+		regulator_bulk_disable(BCM_NUM_SUPPLIES, dev->supplies);
 	}
 
 	/* wait for device to power on and come out of reset */

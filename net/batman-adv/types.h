@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (C) 2007-2018  B.A.T.M.A.N. contributors:
+/* Copyright (C) 2007-2019  B.A.T.M.A.N. contributors:
  *
  * Marek Lindner, Simon Wunderlich
  *
@@ -1222,11 +1222,6 @@ struct batadv_priv_mcast {
 
 	/** @bridged: whether the soft interface has a bridge on top */
 	unsigned char bridged:1;
-
-	/**
-	 * @mla_lock: a lock protecting mla_list and mla_flags
-	 */
-	spinlock_t mla_lock;
 
 	/**
 	 * @num_want_all_unsnoopables: number of nodes wanting unsnoopable IP

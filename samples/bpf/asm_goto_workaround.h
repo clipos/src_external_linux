@@ -13,5 +13,4 @@
 #define asm_volatile_goto(x...) asm volatile("invalid use of asm_volatile_goto")
 #endif
 
-#define volatile(x...) volatile("")
 #endif

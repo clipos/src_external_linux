@@ -740,7 +740,6 @@ static void enumerate_services(struct tb_xdomain *xd)
 	struct tb_service *svc;
 	struct tb_property *p;
 	struct device *dev;
-	int id;
 
 	/*
 	 * First remove all services that are not available anymore in
@@ -769,12 +768,7 @@ static void enumerate_services(struct tb_xdomain *xd)
 			break;
 		}
 
-		id = ida_simple_get(&xd->service_ids, 0, 0, GFP_KERNEL);
-		if (id < 0) {
-			kfree(svc);
-			break;
-		}
-		svc->id = id;
+		svc->id = ida_simple_get(&xd->service_ids, 0, 0, GFP_KERNEL);
 		svc->dev.bus = &tb_bus_type;
 		svc->dev.type = &tb_service_type;
 		svc->dev.parent = &xd->dev;

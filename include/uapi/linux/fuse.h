@@ -122,6 +122,9 @@
  *  - add FOPEN_CACHE_DIR
  *  - add FUSE_MAX_PAGES, add max_pages to init_out
  *  - add FUSE_CACHE_SYMLINKS
+ *
+ *  7.29
+ *  - add FUSE_NO_OPENDIR_SUPPORT flag
  */
 
 #ifndef _LINUX_FUSE_H
@@ -157,7 +160,7 @@
 #define FUSE_KERNEL_VERSION 7
 
 /** Minor version number of this interface */
-#define FUSE_KERNEL_MINOR_VERSION 28
+#define FUSE_KERNEL_MINOR_VERSION 29
 
 /** The node ID of the root inode */
 #define FUSE_ROOT_ID 1
@@ -226,13 +229,11 @@ struct fuse_file_lock {
  * FOPEN_KEEP_CACHE: don't invalidate the data cache on open
  * FOPEN_NONSEEKABLE: the file is not seekable
  * FOPEN_CACHE_DIR: allow caching this directory
- * FOPEN_STREAM: the file is stream-like (no file position at all)
  */
 #define FOPEN_DIRECT_IO		(1 << 0)
 #define FOPEN_KEEP_CACHE	(1 << 1)
 #define FOPEN_NONSEEKABLE	(1 << 2)
 #define FOPEN_CACHE_DIR		(1 << 3)
-#define FOPEN_STREAM		(1 << 4)
 
 /**
  * INIT request/reply flags
@@ -261,6 +262,7 @@ struct fuse_file_lock {
  * FUSE_ABORT_ERROR: reading the device after abort returns ECONNABORTED
  * FUSE_MAX_PAGES: init_out.max_pages contains the max number of req pages
  * FUSE_CACHE_SYMLINKS: cache READLINK responses
+ * FUSE_NO_OPENDIR_SUPPORT: kernel supports zero-message opendir
  */
 #define FUSE_ASYNC_READ		(1 << 0)
 #define FUSE_POSIX_LOCKS	(1 << 1)
@@ -286,6 +288,7 @@ struct fuse_file_lock {
 #define FUSE_ABORT_ERROR	(1 << 21)
 #define FUSE_MAX_PAGES		(1 << 22)
 #define FUSE_CACHE_SYMLINKS	(1 << 23)
+#define FUSE_NO_OPENDIR_SUPPORT (1 << 24)
 
 /**
  * CUSE INIT request/reply flags

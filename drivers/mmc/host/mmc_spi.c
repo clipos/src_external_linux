@@ -819,10 +819,6 @@ mmc_spi_readblock(struct mmc_spi_host *host, struct spi_transfer *t,
 	}
 
 	status = spi_sync_locked(spi, &host->m);
-	if (status < 0) {
-		dev_dbg(&spi->dev, "read error %d\n", status);
-		return status;
-	}
 
 	if (host->dma_dev) {
 		dma_sync_single_for_cpu(host->dma_dev,
@@ -1457,7 +1453,7 @@ static int mmc_spi_probe(struct spi_device *spi)
 	mmc_detect_change(mmc, 0);
 
 	/* Index 1 is write protect/read only */
-	status = mmc_gpiod_request_ro(mmc, NULL, 1, false, 0, NULL);
+	status = mmc_gpiod_request_ro(mmc, NULL, 1, 0, NULL);
 	if (status == -EPROBE_DEFER)
 		goto fail_add_host;
 	if (!status)

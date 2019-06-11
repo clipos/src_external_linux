@@ -113,12 +113,8 @@ struct nd_percpu_lane {
 	spinlock_t lock;
 };
 
-enum nd_label_flags {
-	ND_LABEL_REAP,
-};
 struct nd_label_ent {
 	struct list_head list;
-	unsigned long flags;
 	struct nd_namespace_label *label;
 };
 
@@ -157,7 +153,7 @@ struct nd_region {
 	u16 ndr_mappings;
 	u64 ndr_size;
 	u64 ndr_start;
-	int id, num_lanes, ro, numa_node;
+	int id, num_lanes, ro, numa_node, target_node;
 	void *provider_data;
 	struct kernfs_node *bb_state;
 	struct badblocks bb;

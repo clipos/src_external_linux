@@ -15,7 +15,7 @@
  * Copyright (C) 2008 Magnus Damm
  * Copyright (C) 2008, Guennadi Liakhovetski <kernel@pengutronix.de>
  *
- * Hardware specific bits initialy based on former work by Matt Callow
+ * Hardware specific bits initially based on former work by Matt Callow
  * drivers/media/video/omap/sensor_ov6650.c
  * Copyright (C) 2006 Matt Callow
  *
@@ -759,7 +759,7 @@ static int ov6650_s_frame_interval(struct v4l2_subdev *sd,
 
 	/*
 	 * Keep result to be used as tpf limit
-	 * for subseqent clock divider calculations
+	 * for subsequent clock divider calculations
 	 */
 	priv->tpf.numerator = div;
 	priv->tpf.denominator = FRAME_RATE_MAX;
@@ -810,18 +810,9 @@ static int ov6650_video_probe(struct i2c_client *client)
 	u8		pidh, pidl, midh, midl;
 	int		ret;
 
-	priv->clk = v4l2_clk_get(&client->dev, NULL);
-	if (IS_ERR(priv->clk)) {
-		ret = PTR_ERR(priv->clk);
-		dev_err(&client->dev, "v4l2_clk request err: %d\n", ret);
-		return ret;
-	}
-
 	ret = ov6650_s_power(&priv->subdev, 1);
 	if (ret < 0)
-		goto eclkput;
-
-	msleep(20);
+		return ret;
 
 	/*
 	 * check and show product ID and manufacturer ID
@@ -856,11 +847,6 @@ static int ov6650_video_probe(struct i2c_client *client)
 
 done:
 	ov6650_s_power(&priv->subdev, 0);
-	if (!ret)
-		return 0;
-eclkput:
-	v4l2_clk_put(priv->clk);
-
 	return ret;
 }
 
@@ -1003,9 +989,18 @@ static int ov6650_probe(struct i2c_client *client,
 	priv->code	  = MEDIA_BUS_FMT_YUYV8_2X8;
 	priv->colorspace  = V4L2_COLORSPACE_JPEG;
 
+	priv->clk = v4l2_clk_get(&client->dev, NULL);
+	if (IS_ERR(priv->clk)) {
+		ret = PTR_ERR(priv->clk);
+		goto eclkget;
+	}
+
 	ret = ov6650_video_probe(client);
-	if (ret)
+	if (ret) {
+		v4l2_clk_put(priv->clk);
+eclkget:
 		v4l2_ctrl_handler_free(&priv->hdl);
+	}
 
 	return ret;
 }

@@ -11,6 +11,7 @@
 #include <linux/stop_machine.h>
 #include <linux/slab.h>
 #include <linux/kdebug.h>
+#include <linux/kprobes.h>
 #include <asm/text-patching.h>
 #include <asm/alternative.h>
 #include <asm/sections.h>
@@ -393,10 +394,10 @@ void __init_or_module noinline apply_alternatives(struct alt_instr *start,
 			continue;
 		}
 
-		DPRINTK("feat: %d*32+%d, old: (%px len: %d), repl: (%px, len: %d), pad: %d",
+		DPRINTK("feat: %d*32+%d, old: (%pS (%px) len: %d), repl: (%px, len: %d), pad: %d",
 			a->cpuid >> 5,
 			a->cpuid & 0x1f,
-			instr, a->instrlen,
+			instr, instr, a->instrlen,
 			replacement, a->replacementlen, a->padlen);
 
 		DUMP_BYTES(instr, a->instrlen, "%px: old_insn: ", instr);
@@ -666,29 +667,15 @@ void __init alternative_instructions(void)
  * handlers seeing an inconsistent instruction while you patch.
  */
 void *__init_or_module text_poke_early(void *addr, const void *opcode,
-				       size_t len)
+					      size_t len)
 {
 	unsigned long flags;
-
-	if (boot_cpu_has(X86_FEATURE_NX) &&
-	    is_module_text_address((unsigned long)addr)) {
-		/*
-		 * Modules text is marked initially as non-executable, so the
-		 * code cannot be running and speculative code-fetches are
-		 * prevented. Just change the code.
-		 */
-		memcpy(addr, opcode, len);
-	} else {
-		local_irq_save(flags);
-		memcpy(addr, opcode, len);
-		local_irq_restore(flags);
-		sync_core();
-
-		/*
-		 * Could also do a CLFLUSH here to speed up CPU recovery; but
-		 * that causes hangs on some VIA CPUs.
-		 */
-	}
+	local_irq_save(flags);
+	memcpy(addr, opcode, len);
+	local_irq_restore(flags);
+	sync_core();
+	/* Could also do a CLFLUSH here to speed up CPU recovery; but
+	   that causes hangs on some VIA CPUs. */
 	return addr;
 }
 
@@ -778,8 +765,8 @@ int poke_int3_handler(struct pt_regs *regs)
 	regs->ip = (unsigned long) bp_int3_handler;
 
 	return 1;
-
 }
+NOKPROBE_SYMBOL(poke_int3_handler);
 
 /**
  * text_poke_bp() -- update instructions on live kernel on SMP

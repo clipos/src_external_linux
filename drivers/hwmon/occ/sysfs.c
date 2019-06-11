@@ -1,14 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/*
- * OCC hwmon driver sysfs interface
- *
- * Copyright (C) IBM Corporation 2018
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- */
+// SPDX-License-Identifier: GPL-2.0+
+// Copyright IBM Corp 2019
 
 #include <linux/bitops.h>
 #include <linux/device.h>
@@ -51,16 +42,16 @@ static ssize_t occ_sysfs_show(struct device *dev,
 		val = !!(header->status & OCC_STAT_ACTIVE);
 		break;
 	case 2:
-		val = !!(header->ext_status & OCC_EXT_STAT_DVFS_OT);
+		val = !!(header->status & OCC_EXT_STAT_DVFS_OT);
 		break;
 	case 3:
-		val = !!(header->ext_status & OCC_EXT_STAT_DVFS_POWER);
+		val = !!(header->status & OCC_EXT_STAT_DVFS_POWER);
 		break;
 	case 4:
-		val = !!(header->ext_status & OCC_EXT_STAT_MEM_THROTTLE);
+		val = !!(header->status & OCC_EXT_STAT_MEM_THROTTLE);
 		break;
 	case 5:
-		val = !!(header->ext_status & OCC_EXT_STAT_QUICK_DROP);
+		val = !!(header->status & OCC_EXT_STAT_QUICK_DROP);
 		break;
 	case 6:
 		val = header->occ_state;

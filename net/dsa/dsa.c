@@ -57,6 +57,7 @@ const struct dsa_device_ops *dsa_device_ops[DSA_TAG_LAST] = {
 #endif
 #ifdef CONFIG_NET_DSA_TAG_KSZ9477
 	[DSA_TAG_PROTO_KSZ9477] = &ksz9477_netdev_ops,
+	[DSA_TAG_PROTO_KSZ9893] = &ksz9893_netdev_ops,
 #endif
 #ifdef CONFIG_NET_DSA_TAG_LAN9303
 	[DSA_TAG_PROTO_LAN9303] = &lan9303_netdev_ops,
@@ -93,6 +94,7 @@ const char *dsa_tag_protocol_to_str(const struct dsa_device_ops *ops)
 #endif
 #ifdef CONFIG_NET_DSA_TAG_KSZ9477
 		[DSA_TAG_PROTO_KSZ9477] = "ksz9477",
+		[DSA_TAG_PROTO_KSZ9893] = "ksz9893",
 #endif
 #ifdef CONFIG_NET_DSA_TAG_LAN9303
 		[DSA_TAG_PROTO_LAN9303] = "lan9303",
@@ -342,22 +344,15 @@ static int __init dsa_init_module(void)
 
 	rc = dsa_slave_register_notifier();
 	if (rc)
-		goto register_notifier_fail;
+		return rc;
 
 	rc = dsa_legacy_register();
 	if (rc)
-		goto legacy_register_fail;
+		return rc;
 
 	dev_add_pack(&dsa_pack_type);
 
 	return 0;
-
-legacy_register_fail:
-	dsa_slave_unregister_notifier();
-register_notifier_fail:
-	destroy_workqueue(dsa_owq);
-
-	return rc;
 }
 module_init(dsa_init_module);
 

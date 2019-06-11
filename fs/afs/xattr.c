@@ -69,20 +69,11 @@ static int afs_xattr_get_fid(const struct xattr_handler *handler,
 			     void *buffer, size_t size)
 {
 	struct afs_vnode *vnode = AFS_FS_I(inode);
-	char text[16 + 1 + 24 + 1 + 8 + 1];
+	char text[8 + 1 + 8 + 1 + 8 + 1];
 	size_t len;
 
-	/* The volume ID is 64-bit, the vnode ID is 96-bit and the
-	 * uniquifier is 32-bit.
-	 */
-	len = sprintf(text, "%llx:", vnode->fid.vid);
-	if (vnode->fid.vnode_hi)
-		len += sprintf(text + len, "%x%016llx",
-			       vnode->fid.vnode_hi, vnode->fid.vnode);
-	else
-		len += sprintf(text + len, "%llx", vnode->fid.vnode);
-	len += sprintf(text + len, ":%x", vnode->fid.unique);
-
+	len = sprintf(text, "%llx:%llx:%x",
+		      vnode->fid.vid, vnode->fid.vnode, vnode->fid.unique);
 	if (size == 0)
 		return len;
 	if (len > size)

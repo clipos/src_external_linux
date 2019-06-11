@@ -159,10 +159,6 @@ int nfs40_discover_server_trunking(struct nfs_client *clp,
 		/* Sustain the lease, even if it's empty.  If the clientid4
 		 * goes stale it's of no use for trunking discovery. */
 		nfs4_schedule_state_renewal(*result);
-
-		/* If the client state need to recover, do it. */
-		if (clp->cl_state)
-			nfs4_schedule_state_manager(clp);
 	}
 out:
 	return status;
@@ -567,6 +563,7 @@ static void nfs4_gc_state_owners(struct nfs_server *server)
  * nfs4_get_state_owner - Look up a state owner given a credential
  * @server: nfs_server to search
  * @cred: RPC credential to match
+ * @gfp_flags: allocation mode
  *
  * Returns a pointer to an instantiated nfs4_state_owner struct, or NULL.
  */

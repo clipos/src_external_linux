@@ -317,18 +317,6 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list)
 	}
 }
 
-bool is_discard_enabled(struct cache_set *s)
-{
-	struct cache *ca;
-	unsigned int i;
-
-	for_each_cache(ca, s, i)
-		if (ca->discard)
-			return true;
-
-	return false;
-}
-
 int bch_journal_replay(struct cache_set *s, struct list_head *list)
 {
 	int ret = 0, keys = 0, entries = 0;
@@ -342,17 +330,9 @@ int bch_journal_replay(struct cache_set *s, struct list_head *list)
 	list_for_each_entry(i, list, list) {
 		BUG_ON(i->pin && atomic_read(i->pin) != 1);
 
-		if (n != i->j.seq) {
-			if (n == start && is_discard_enabled(s))
-				pr_info("bcache: journal entries %llu-%llu may be discarded! (replaying %llu-%llu)",
-					n, i->j.seq - 1, start, end);
-			else {
-				pr_err("bcache: journal entries %llu-%llu missing! (replaying %llu-%llu)",
-					n, i->j.seq - 1, start, end);
-				ret = -EIO;
-				goto err;
-			}
-		}
+		cache_set_err_on(n != i->j.seq, s,
+"bcache: journal entries %llu-%llu missing! (replaying %llu-%llu)",
+				 n, i->j.seq - 1, start, end);
 
 		for (k = i->j.start;
 		     k < bset_bkey_last(&i->j);
@@ -560,11 +540,11 @@ static void journal_reclaim(struct cache_set *c)
 				  ca->sb.nr_this_dev);
 	}
 
-	if (n) {
-		bkey_init(k);
-		SET_KEY_PTRS(k, n);
+	bkey_init(k);
+	SET_KEY_PTRS(k, n);
+
+	if (n)
 		c->journal.blocks_free = c->sb.bucket_size >> c->block_bits;
-	}
 out:
 	if (!journal_full(&c->journal))
 		__closure_wake_up(&c->journal.wait);
@@ -690,9 +670,6 @@ static void journal_write_unlocked(struct closure *cl)
 
 		ca->journal.seq[ca->journal.cur_idx] = w->data->seq;
 	}
-
-	/* If KEY_PTRS(k) == 0, this jset gets lost in air */
-	BUG_ON(i == 0);
 
 	atomic_dec_bug(&fifo_back(&c->journal.pin));
 	bch_journal_next(&c->journal);

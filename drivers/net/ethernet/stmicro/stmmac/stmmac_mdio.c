@@ -267,8 +267,7 @@ int stmmac_mdio_reset(struct mii_bus *bus)
 			of_property_read_u32_array(np,
 				"snps,reset-delays-us", data->delays, 3);
 
-			if (devm_gpio_request(priv->device, data->reset_gpio,
-					      "mdio-reset"))
+			if (gpio_request(data->reset_gpio, "mdio-reset"))
 				return 0;
 		}
 

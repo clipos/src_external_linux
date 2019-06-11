@@ -40,9 +40,11 @@
 #include <crypto/ctr.h>
 #include <crypto/gcm.h>
 #include <crypto/sha.h>
+#include <crypto/rng.h>
 #include <crypto/scatterwalk.h>
 #include <crypto/skcipher.h>
 #include <crypto/internal/aead.h>
+#include <crypto/internal/rng.h>
 #include <crypto/internal/skcipher.h>
 #include "crypto4xx_reg_def.h"
 #include "crypto4xx_core.h"
@@ -712,23 +714,7 @@ int crypto4xx_build_pd(struct crypto_async_request *req,
 	size_t offset_to_sr_ptr;
 	u32 gd_idx = 0;
 	int tmp;
-	bool is_busy, force_sd;
-
-	/*
-	 * There's a very subtile/disguised "bug" in the hardware that
-	 * gets indirectly mentioned in 18.1.3.5 Encryption/Decryption
-	 * of the hardware spec:
-	 * *drum roll* the AES/(T)DES OFB and CFB modes are listed as
-	 * operation modes for >>> "Block ciphers" <<<.
-	 *
-	 * To workaround this issue and stop the hardware from causing
-	 * "overran dst buffer" on crypttexts that are not a multiple
-	 * of 16 (AES_BLOCK_SIZE), we force the driver to use the
-	 * scatter buffers.
-	 */
-	force_sd = (req_sa->sa_command_1.bf.crypto_mode9_8 == CRYPTO_MODE_CFB
-		|| req_sa->sa_command_1.bf.crypto_mode9_8 == CRYPTO_MODE_OFB)
-		&& (datalen % AES_BLOCK_SIZE);
+	bool is_busy;
 
 	/* figure how many gd are needed */
 	tmp = sg_nents_for_len(src, assoclen + datalen);
@@ -746,7 +732,7 @@ int crypto4xx_build_pd(struct crypto_async_request *req,
 	}
 
 	/* figure how many sd are needed */
-	if (sg_is_last(dst) && force_sd == false) {
+	if (sg_is_last(dst)) {
 		num_sd = 0;
 	} else {
 		if (datalen > PPC4XX_SD_BUFFER_SIZE) {
@@ -821,10 +807,9 @@ int crypto4xx_build_pd(struct crypto_async_request *req,
 	pd->sa_len = sa_len;
 
 	pd_uinfo = &dev->pdr_uinfo[pd_entry];
+	pd_uinfo->async_req = req;
 	pd_uinfo->num_gd = num_gd;
 	pd_uinfo->num_sd = num_sd;
-	pd_uinfo->dest_va = dst;
-	pd_uinfo->async_req = req;
 
 	if (iv_len)
 		memcpy(pd_uinfo->sr_va->save_iv, iv, iv_len);
@@ -843,6 +828,7 @@ int crypto4xx_build_pd(struct crypto_async_request *req,
 		/* get first gd we are going to use */
 		gd_idx = fst_gd;
 		pd_uinfo->first_gd = fst_gd;
+		pd_uinfo->num_gd = num_gd;
 		gd = crypto4xx_get_gdp(dev, &gd_dma, gd_idx);
 		pd->src = gd_dma;
 		/* enable gather */
@@ -879,14 +865,17 @@ int crypto4xx_build_pd(struct crypto_async_request *req,
 		 * Indicate gather array is not used
 		 */
 		pd_uinfo->first_gd = 0xffffffff;
+		pd_uinfo->num_gd = 0;
 	}
-	if (!num_sd) {
+	if (sg_is_last(dst)) {
 		/*
 		 * we know application give us dst a whole piece of memory
 		 * no need to use scatter ring.
 		 */
 		pd_uinfo->using_sd = 0;
 		pd_uinfo->first_sd = 0xffffffff;
+		pd_uinfo->num_sd = 0;
+		pd_uinfo->dest_va = dst;
 		sa->sa_command_0.bf.scatter = 0;
 		pd->dest = (u32)dma_map_page(dev->core_dev->device,
 					     sg_page(dst), dst->offset,
@@ -900,7 +889,9 @@ int crypto4xx_build_pd(struct crypto_async_request *req,
 		nbytes = datalen;
 		sa->sa_command_0.bf.scatter = 1;
 		pd_uinfo->using_sd = 1;
+		pd_uinfo->dest_va = dst;
 		pd_uinfo->first_sd = fst_sd;
+		pd_uinfo->num_sd = num_sd;
 		sd = crypto4xx_get_sdp(dev, &sd_dma, sd_idx);
 		pd->dest = sd_dma;
 		/* setup scatter descriptor */
@@ -1046,6 +1037,10 @@ static int crypto4xx_register_alg(struct crypto4xx_device *sec_dev,
 			rc = crypto_register_ahash(&alg->alg.u.hash);
 			break;
 
+		case CRYPTO_ALG_TYPE_RNG:
+			rc = crypto_register_rng(&alg->alg.u.rng);
+			break;
+
 		default:
 			rc = crypto_register_skcipher(&alg->alg.u.cipher);
 			break;
@@ -1073,6 +1068,10 @@ static void crypto4xx_unregister_alg(struct crypto4xx_device *sec_dev)
 
 		case CRYPTO_ALG_TYPE_AEAD:
 			crypto_unregister_aead(&alg->alg.u.aead);
+			break;
+
+		case CRYPTO_ALG_TYPE_RNG:
+			crypto_unregister_rng(&alg->alg.u.rng);
 			break;
 
 		default:
@@ -1131,6 +1130,69 @@ static irqreturn_t crypto4xx_ce_interrupt_handler_revb(int irq, void *data)
 {
 	return crypto4xx_interrupt_handler(irq, data, PPC4XX_INTERRUPT_CLR |
 		PPC4XX_TMO_ERR_INT);
+}
+
+static int ppc4xx_prng_data_read(struct crypto4xx_device *dev,
+				 u8 *data, unsigned int max)
+{
+	unsigned int i, curr = 0;
+	u32 val[2];
+
+	do {
+		/* trigger PRN generation */
+		writel(PPC4XX_PRNG_CTRL_AUTO_EN,
+		       dev->ce_base + CRYPTO4XX_PRNG_CTRL);
+
+		for (i = 0; i < 1024; i++) {
+			/* usually 19 iterations are enough */
+			if ((readl(dev->ce_base + CRYPTO4XX_PRNG_STAT) &
+			     CRYPTO4XX_PRNG_STAT_BUSY))
+				continue;
+
+			val[0] = readl_be(dev->ce_base + CRYPTO4XX_PRNG_RES_0);
+			val[1] = readl_be(dev->ce_base + CRYPTO4XX_PRNG_RES_1);
+			break;
+		}
+		if (i == 1024)
+			return -ETIMEDOUT;
+
+		if ((max - curr) >= 8) {
+			memcpy(data, &val, 8);
+			data += 8;
+			curr += 8;
+		} else {
+			/* copy only remaining bytes */
+			memcpy(data, &val, max - curr);
+			break;
+		}
+	} while (curr < max);
+
+	return curr;
+}
+
+static int crypto4xx_prng_generate(struct crypto_rng *tfm,
+				   const u8 *src, unsigned int slen,
+				   u8 *dstn, unsigned int dlen)
+{
+	struct rng_alg *alg = crypto_rng_alg(tfm);
+	struct crypto4xx_alg *amcc_alg;
+	struct crypto4xx_device *dev;
+	int ret;
+
+	amcc_alg = container_of(alg, struct crypto4xx_alg, alg.u.rng);
+	dev = amcc_alg->dev;
+
+	mutex_lock(&dev->core_dev->rng_lock);
+	ret = ppc4xx_prng_data_read(dev, dstn, dlen);
+	mutex_unlock(&dev->core_dev->rng_lock);
+	return ret;
+}
+
+
+static int crypto4xx_prng_seed(struct crypto_rng *tfm, const u8 *seed,
+			unsigned int slen)
+{
+	return 0;
 }
 
 /**
@@ -1302,6 +1364,18 @@ static struct crypto4xx_alg_common crypto4xx_alg[] = {
 			.cra_module	= THIS_MODULE,
 		},
 	} },
+	{ .type = CRYPTO_ALG_TYPE_RNG, .u.rng = {
+		.base = {
+			.cra_name		= "stdrng",
+			.cra_driver_name        = "crypto4xx_rng",
+			.cra_priority		= 300,
+			.cra_ctxsize		= 0,
+			.cra_module		= THIS_MODULE,
+		},
+		.generate               = crypto4xx_prng_generate,
+		.seed                   = crypto4xx_prng_seed,
+		.seedsize               = 0,
+	} },
 };
 
 /**
@@ -1371,6 +1445,7 @@ static int crypto4xx_probe(struct platform_device *ofdev)
 	core_dev->dev->core_dev = core_dev;
 	core_dev->dev->is_revb = is_revb;
 	core_dev->device = dev;
+	mutex_init(&core_dev->rng_lock);
 	spin_lock_init(&core_dev->lock);
 	INIT_LIST_HEAD(&core_dev->dev->alg_list);
 	ratelimit_default_init(&core_dev->dev->aead_ratelimit);
@@ -1450,6 +1525,7 @@ static int crypto4xx_remove(struct platform_device *ofdev)
 	tasklet_kill(&core_dev->tasklet);
 	/* Un-register with Linux CryptoAPI */
 	crypto4xx_unregister_alg(core_dev->dev);
+	mutex_destroy(&core_dev->rng_lock);
 	/* Free all allocated memory */
 	crypto4xx_stop_all(core_dev);
 

@@ -788,7 +788,7 @@ static int bnxt_set_channels(struct net_device *dev,
 			 */
 		}
 	} else {
-		rc = bnxt_reserve_rings(bp, true);
+		rc = bnxt_reserve_rings(bp);
 	}
 
 	return rc;
