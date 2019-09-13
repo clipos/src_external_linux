@@ -61,7 +61,7 @@ static void tls_device_free_ctx(struct tls_context *ctx)
 	if (ctx->rx_conf == TLS_HW)
 		kfree(tls_offload_ctx_rx(ctx));
 
-	tls_ctx_free(ctx);
+	kfree(ctx);
 }
 
 static void tls_device_gc_task(struct work_struct *work)
@@ -86,22 +86,6 @@ static void tls_device_gc_task(struct work_struct *work)
 
 		list_del(&ctx->list);
 		tls_device_free_ctx(ctx);
-	}
-}
-
-static void tls_device_attach(struct tls_context *ctx, struct sock *sk,
-			      struct net_device *netdev)
-{
-	if (sk->sk_destruct != tls_device_sk_destruct) {
-		refcount_set(&ctx->refcount, 1);
-		dev_hold(netdev);
-		ctx->netdev = netdev;
-		spin_lock_irq(&tls_device_lock);
-		list_add_tail(&ctx->list, &tls_device_list);
-		spin_unlock_irq(&tls_device_lock);
-
-		ctx->sk_destruct = sk->sk_destruct;
-		sk->sk_destruct = tls_device_sk_destruct;
 	}
 }
 
@@ -199,7 +183,7 @@ static void tls_icsk_clean_acked(struct sock *sk, u32 acked_seq)
  * socket and no in-flight SKBs associated with this
  * socket, so it is safe to free all the resources.
  */
-void tls_device_sk_destruct(struct sock *sk)
+static void tls_device_sk_destruct(struct sock *sk)
 {
 	struct tls_context *tls_ctx = tls_get_ctx(sk);
 	struct tls_offload_context_tx *ctx = tls_offload_ctx_tx(tls_ctx);
@@ -217,7 +201,6 @@ void tls_device_sk_destruct(struct sock *sk)
 	if (refcount_dec_and_test(&tls_ctx->refcount))
 		tls_device_queue_ctx_destruction(tls_ctx);
 }
-EXPORT_SYMBOL(tls_device_sk_destruct);
 
 void tls_device_free_resources_tx(struct sock *sk)
 {
@@ -558,14 +541,11 @@ static int tls_device_push_pending_record(struct sock *sk, int flags)
 
 void tls_device_write_space(struct sock *sk, struct tls_context *ctx)
 {
-	int rc = 0;
-
 	if (!sk->sk_write_pending && tls_is_partially_sent_record(ctx)) {
 		gfp_t sk_allocation = sk->sk_allocation;
 
 		sk->sk_allocation = GFP_ATOMIC;
-		rc = tls_push_partial_record(sk, ctx,
-					     MSG_DONTWAIT | MSG_NOSIGNAL);
+		tls_push_partial_record(sk, ctx, MSG_DONTWAIT | MSG_NOSIGNAL);
 		sk->sk_allocation = sk_allocation;
 	}
 }
@@ -596,7 +576,7 @@ void handle_device_resync(struct sock *sk, u32 seq, u64 rcd_sn)
 
 	rx_ctx = tls_offload_ctx_rx(tls_ctx);
 	resync_req = atomic64_read(&rx_ctx->resync_req);
-	req_seq = ntohl(resync_req >> 32) - ((u32)TLS_HEADER_SIZE - 1);
+	req_seq = (resync_req >> 32) - ((u32)TLS_HEADER_SIZE - 1);
 	is_req_pending = resync_req;
 
 	if (unlikely(is_req_pending) && req_seq == seq &&
@@ -711,6 +691,22 @@ int tls_device_decrypted(struct sock *sk, struct sk_buff *skb)
 		tls_device_reencrypt(sk, skb);
 }
 
+static void tls_device_attach(struct tls_context *ctx, struct sock *sk,
+			      struct net_device *netdev)
+{
+	if (sk->sk_destruct != tls_device_sk_destruct) {
+		refcount_set(&ctx->refcount, 1);
+		dev_hold(netdev);
+		ctx->netdev = netdev;
+		spin_lock_irq(&tls_device_lock);
+		list_add_tail(&ctx->list, &tls_device_list);
+		spin_unlock_irq(&tls_device_lock);
+
+		ctx->sk_destruct = sk->sk_destruct;
+		sk->sk_destruct = tls_device_sk_destruct;
+	}
+}
+
 int tls_set_device_offload(struct sock *sk, struct tls_context *ctx)
 {
 	u16 nonce_size, tag_size, iv_size, rec_seq_size;
@@ -746,11 +742,6 @@ int tls_set_device_offload(struct sock *sk, struct tls_context *ctx)
 	}
 
 	crypto_info = &ctx->crypto_send.info;
-	if (crypto_info->version != TLS_1_2_VERSION) {
-		rc = -EOPNOTSUPP;
-		goto free_offload_ctx;
-	}
-
 	switch (crypto_info->cipher_type) {
 	case TLS_CIPHER_AES_GCM_128:
 		nonce_size = TLS_CIPHER_AES_GCM_128_IV_SIZE;
@@ -885,9 +876,6 @@ int tls_set_device_offload_rx(struct sock *sk, struct tls_context *ctx)
 	struct net_device *netdev;
 	int rc = 0;
 
-	if (ctx->crypto_recv.info.version != TLS_1_2_VERSION)
-		return -EOPNOTSUPP;
-
 	/* We support starting offload on multiple sockets
 	 * concurrently, so we only need a read lock here.
 	 * This lock must precede get_netdev_for_sock to prevent races between
@@ -902,8 +890,6 @@ int tls_set_device_offload_rx(struct sock *sk, struct tls_context *ctx)
 	}
 
 	if (!(netdev->features & NETIF_F_HW_TLS_RX)) {
-		pr_err_ratelimited("%s: netdev %s with no TLS offload\n",
-				   __func__, netdev->name);
 		rc = -ENOTSUPP;
 		goto release_netdev;
 	}
@@ -931,11 +917,8 @@ int tls_set_device_offload_rx(struct sock *sk, struct tls_context *ctx)
 	rc = netdev->tlsdev_ops->tls_dev_add(netdev, sk, TLS_OFFLOAD_CTX_DIR_RX,
 					     &ctx->crypto_recv.info,
 					     tcp_sk(sk)->copied_seq);
-	if (rc) {
-		pr_err_ratelimited("%s: The netdev has refused to offload this socket\n",
-				   __func__);
+	if (rc)
 		goto free_sw_resources;
-	}
 
 	tls_device_attach(ctx, sk, netdev);
 	goto release_netdev;
@@ -1060,4 +1043,5 @@ void __exit tls_device_cleanup(void)
 {
 	unregister_netdevice_notifier(&tls_dev_notifier);
 	flush_work(&tls_device_gc_work);
+	clean_acked_data_flush();
 }

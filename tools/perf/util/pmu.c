@@ -709,7 +709,9 @@ static void pmu_add_cpu_aliases(struct list_head *head, struct perf_pmu *pmu)
 {
 	int i;
 	struct pmu_events_map *map;
+	struct pmu_event *pe;
 	const char *name = pmu->name;
+	const char *pname;
 
 	map = perf_pmu__find_map(pmu);
 	if (!map)
@@ -720,26 +722,28 @@ static void pmu_add_cpu_aliases(struct list_head *head, struct perf_pmu *pmu)
 	 */
 	i = 0;
 	while (1) {
-		const char *cpu_name = is_arm_pmu_core(name) ? name : "cpu";
-		struct pmu_event *pe = &map->table[i++];
-		const char *pname = pe->pmu ? pe->pmu : cpu_name;
 
+		pe = &map->table[i++];
 		if (!pe->name) {
 			if (pe->metric_group || pe->metric_name)
 				continue;
 			break;
 		}
 
-		/*
-		 * uncore alias may be from different PMU
-		 * with common prefix
-		 */
-		if (pmu_is_uncore(name) &&
-		    !strncmp(pname, name, strlen(pname)))
-			goto new_alias;
+		if (!is_arm_pmu_core(name)) {
+			pname = pe->pmu ? pe->pmu : "cpu";
 
-		if (strcmp(pname, name))
-			continue;
+			/*
+			 * uncore alias may be from different PMU
+			 * with common prefix
+			 */
+			if (pmu_is_uncore(name) &&
+			    !strncmp(pname, name, strlen(pname)))
+				goto new_alias;
+
+			if (strcmp(pname, name))
+				continue;
+		}
 
 new_alias:
 		/* need type casts to override 'const' */

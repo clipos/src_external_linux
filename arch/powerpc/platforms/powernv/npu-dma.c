@@ -1,12 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * This file implements the DMA operations for NVLink devices. The NPU
  * devices all point to the same iommu table as the parent PCI device.
  *
  * Copyright Alistair Popple, IBM Corporation 2015.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of version 2 of the GNU General Public
- * License as published by the Free Software Foundation.
  */
 
 #include <linux/mmu_notifier.h>
@@ -31,22 +28,9 @@ static DEFINE_SPINLOCK(npu_context_lock);
 static struct pci_dev *get_pci_dev(struct device_node *dn)
 {
 	struct pci_dn *pdn = PCI_DN(dn);
-	struct pci_dev *pdev;
 
-	pdev = pci_get_domain_bus_and_slot(pci_domain_nr(pdn->phb->bus),
+	return pci_get_domain_bus_and_slot(pci_domain_nr(pdn->phb->bus),
 					   pdn->busno, pdn->devfn);
-
-	/*
-	 * pci_get_domain_bus_and_slot() increased the reference count of
-	 * the PCI device, but callers don't need that actually as the PE
-	 * already holds a reference to the device. Since callers aren't
-	 * aware of the reference count change, call pci_dev_put() now to
-	 * avoid leaks.
-	 */
-	if (pdev)
-		pci_dev_put(pdev);
-
-	return pdev;
 }
 
 /* Given a NPU device get the associated PCI device. */
@@ -1226,9 +1210,8 @@ int pnv_npu2_map_lpar_dev(struct pci_dev *gpdev, unsigned int lparid,
 	 * Currently we only support radix and non-zero LPCR only makes sense
 	 * for hash tables so skiboot expects the LPCR parameter to be a zero.
 	 */
-	ret = opal_npu_map_lpar(nphb->opal_id,
-			PCI_DEVID(gpdev->bus->number, gpdev->devfn), lparid,
-			0 /* LPCR bits */);
+	ret = opal_npu_map_lpar(nphb->opal_id, pci_dev_id(gpdev), lparid,
+				0 /* LPCR bits */);
 	if (ret) {
 		dev_err(&gpdev->dev, "Error %d mapping device to LPAR\n", ret);
 		return ret;
@@ -1237,7 +1220,7 @@ int pnv_npu2_map_lpar_dev(struct pci_dev *gpdev, unsigned int lparid,
 	dev_dbg(&gpdev->dev, "init context opalid=%llu msr=%lx\n",
 			nphb->opal_id, msr);
 	ret = opal_npu_init_context(nphb->opal_id, 0/*__unused*/, msr,
-			PCI_DEVID(gpdev->bus->number, gpdev->devfn));
+				    pci_dev_id(gpdev));
 	if (ret < 0)
 		dev_err(&gpdev->dev, "Failed to init context: %d\n", ret);
 	else
@@ -1271,7 +1254,7 @@ int pnv_npu2_unmap_lpar_dev(struct pci_dev *gpdev)
 	dev_dbg(&gpdev->dev, "destroy context opalid=%llu\n",
 			nphb->opal_id);
 	ret = opal_npu_destroy_context(nphb->opal_id, 0/*__unused*/,
-			PCI_DEVID(gpdev->bus->number, gpdev->devfn));
+				       pci_dev_id(gpdev));
 	if (ret < 0) {
 		dev_err(&gpdev->dev, "Failed to destroy context: %d\n", ret);
 		return ret;
@@ -1279,9 +1262,8 @@ int pnv_npu2_unmap_lpar_dev(struct pci_dev *gpdev)
 
 	/* Set LPID to 0 anyway, just to be safe */
 	dev_dbg(&gpdev->dev, "Map LPAR opalid=%llu lparid=0\n", nphb->opal_id);
-	ret = opal_npu_map_lpar(nphb->opal_id,
-			PCI_DEVID(gpdev->bus->number, gpdev->devfn), 0 /*LPID*/,
-			0 /* LPCR bits */);
+	ret = opal_npu_map_lpar(nphb->opal_id, pci_dev_id(gpdev), 0 /*LPID*/,
+				0 /* LPCR bits */);
 	if (ret)
 		dev_err(&gpdev->dev, "Error %d mapping device to LPAR\n", ret);
 

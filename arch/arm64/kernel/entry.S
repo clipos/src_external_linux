@@ -1,21 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Low-level exception handling code
  *
  * Copyright (C) 2012 ARM Ltd.
  * Authors:	Catalin Marinas <catalin.marinas@arm.com>
  *		Will Deacon <will.deacon@arm.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/arm-smccc.h>
@@ -336,6 +325,21 @@ alternative_if ARM64_WORKAROUND_845719
 alternative_else_nop_endif
 #endif
 3:
+#ifdef CONFIG_ARM64_ERRATUM_1418040
+alternative_if_not ARM64_WORKAROUND_1418040
+	b	4f
+alternative_else_nop_endif
+	/*
+	 * if (x22.mode32 == cntkctl_el1.el0vcten)
+	 *     cntkctl_el1.el0vcten = ~cntkctl_el1.el0vcten
+	 */
+	mrs	x1, cntkctl_el1
+	eon	x0, x1, x22, lsr #3
+	tbz	x0, #1, 4f
+	eor	x1, x1, #2	// ARCH_TIMER_USR_VCT_ACCESS_EN
+	msr	cntkctl_el1, x1
+4:
+#endif
 	apply_ssbd 0, x0, x1
 	.endif
 
@@ -362,11 +366,11 @@ alternative_else_nop_endif
 	.if	\el == 0
 alternative_insn eret, nop, ARM64_UNMAP_KERNEL_AT_EL0
 #ifdef CONFIG_UNMAP_KERNEL_AT_EL0
-	bne	4f
+	bne	5f
 	msr	far_el1, x30
 	tramp_alias	x30, tramp_exit_native
 	br	x30
-4:
+5:
 	tramp_alias	x30, tramp_exit_compat
 	br	x30
 #endif
@@ -419,20 +423,6 @@ tsk	.req	x28		// current thread_info
 	blr	x1
 	irq_stack_exit
 	.endm
-
-#ifdef CONFIG_ARM64_PSEUDO_NMI
-	/*
-	 * Set res to 0 if irqs were unmasked in interrupted context.
-	 * Otherwise set res to non-0 value.
-	 */
-	.macro	test_irqs_unmasked res:req, pmr:req
-alternative_if ARM64_HAS_IRQ_PRIO_MASKING
-	sub	\res, \pmr, #GIC_PRIO_IRQON
-alternative_else
-	mov	\res, xzr
-alternative_endif
-	.endm
-#endif
 
 	.text
 
@@ -630,19 +620,19 @@ ENDPROC(el1_sync)
 el1_irq:
 	kernel_entry 1
 	enable_da_f
-
+#ifdef CONFIG_TRACE_IRQFLAGS
 #ifdef CONFIG_ARM64_PSEUDO_NMI
 alternative_if ARM64_HAS_IRQ_PRIO_MASKING
 	ldr	x20, [sp, #S_PMR_SAVE]
-alternative_else_nop_endif
-	test_irqs_unmasked	res=x0, pmr=x20
-	cbz	x0, 1f
-	bl	asm_nmi_enter
-1:
+alternative_else
+	mov	x20, #GIC_PRIO_IRQON
+alternative_endif
+	cmp	x20, #GIC_PRIO_IRQOFF
+	/* Irqs were disabled, don't trace */
+	b.ls	1f
 #endif
-
-#ifdef CONFIG_TRACE_IRQFLAGS
 	bl	trace_hardirqs_off
+1:
 #endif
 
 	irq_handler
@@ -661,22 +651,14 @@ alternative_else_nop_endif
 	bl	preempt_schedule_irq		// irq en/disable is done inside
 1:
 #endif
-
+#ifdef CONFIG_TRACE_IRQFLAGS
 #ifdef CONFIG_ARM64_PSEUDO_NMI
 	/*
 	 * if IRQs were disabled when we received the interrupt, we have an NMI
 	 * and we are not re-enabling interrupt upon eret. Skip tracing.
 	 */
-	test_irqs_unmasked	res=x0, pmr=x20
-	cbz	x0, 1f
-	bl	asm_nmi_exit
-1:
-#endif
-
-#ifdef CONFIG_TRACE_IRQFLAGS
-#ifdef CONFIG_ARM64_PSEUDO_NMI
-	test_irqs_unmasked	res=x0, pmr=x20
-	cbnz	x0, 1f
+	cmp	x20, #GIC_PRIO_IRQOFF
+	b.ls	1f
 #endif
 	bl	trace_hardirqs_on
 1:
@@ -877,7 +859,7 @@ el0_dbg:
 	mov	x1, x25
 	mov	x2, sp
 	bl	do_debug_exception
-	enable_da_f
+	enable_daif
 	ct_user_exit
 	b	ret_to_user
 el0_inv:
@@ -929,7 +911,7 @@ el0_error_naked:
 	enable_dbg
 	mov	x0, sp
 	bl	do_serror
-	enable_da_f
+	enable_daif
 	ct_user_exit
 	b	ret_to_user
 ENDPROC(el0_error)

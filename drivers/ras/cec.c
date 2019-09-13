@@ -290,9 +290,9 @@ int cec_add_elem(u64 pfn)
 	if (!ce_arr.array || ce_arr.disabled)
 		return -ENODEV;
 
-	ca->ces_entered++;
-
 	mutex_lock(&ce_mutex);
+
+	ca->ces_entered++;
 
 	if (ca->n == MAX_ELEMS)
 		WARN_ON(!del_lru_elem_unlocked(ca));
@@ -369,9 +369,7 @@ static int pfn_set(void *data, u64 val)
 {
 	*(u64 *)data = val;
 
-	cec_add_elem(val);
-
-	return 0;
+	return cec_add_elem(val);
 }
 
 DEFINE_DEBUGFS_ATTRIBUTE(pfn_ops, u64_get, pfn_set, "0x%llx\n");

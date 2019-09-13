@@ -1,13 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * linux/include/linux/jbd2.h
  *
  * Written by Stephen C. Tweedie <sct@redhat.com>
  *
  * Copyright 1998-2000 Red Hat, Inc --- All Rights Reserved
- *
- * This file is part of the Linux kernel and is made available under
- * the terms of the GNU General Public License, version 2, or at your
- * option, any later version, incorporated herein by reference.
  *
  * Definitions for transaction data structures for the buffer cache
  * filesystem journaling support.
@@ -454,22 +451,6 @@ struct jbd2_inode {
 	 * @i_flags: Flags of inode [j_list_lock]
 	 */
 	unsigned long i_flags;
-
-	/**
-	 * @i_dirty_start:
-	 *
-	 * Offset in bytes where the dirty range for this inode starts.
-	 * [j_list_lock]
-	 */
-	loff_t i_dirty_start;
-
-	/**
-	 * @i_dirty_end:
-	 *
-	 * Inclusive offset in bytes where the dirty range for this inode
-	 * ends. [j_list_lock]
-	 */
-	loff_t i_dirty_end;
 };
 
 struct jbd2_revoke_table_s;
@@ -1416,12 +1397,6 @@ extern int	   jbd2_journal_force_commit(journal_t *);
 extern int	   jbd2_journal_force_commit_nested(journal_t *);
 extern int	   jbd2_journal_inode_add_write(handle_t *handle, struct jbd2_inode *inode);
 extern int	   jbd2_journal_inode_add_wait(handle_t *handle, struct jbd2_inode *inode);
-extern int	   jbd2_journal_inode_ranged_write(handle_t *handle,
-			struct jbd2_inode *inode, loff_t start_byte,
-			loff_t length);
-extern int	   jbd2_journal_inode_ranged_wait(handle_t *handle,
-			struct jbd2_inode *inode, loff_t start_byte,
-			loff_t length);
 extern int	   jbd2_journal_begin_ordered_truncate(journal_t *journal,
 				struct jbd2_inode *inode, loff_t new_size);
 extern void	   jbd2_journal_init_jbd_inode(struct jbd2_inode *jinode, struct inode *inode);
@@ -1630,7 +1605,6 @@ static inline u32 jbd2_chksum(journal_t *journal, u32 crc,
 		JBD_MAX_CHECKSUM_SIZE);
 
 	desc.shash.tfm = journal->j_chksum_driver;
-	desc.shash.flags = 0;
 	*(u32 *)desc.ctx = crc;
 
 	err = crypto_shash_update(&desc.shash, address, length);

@@ -63,7 +63,7 @@ struct usb_dev_state {
 	unsigned int discsignr;
 	struct pid *disc_pid;
 	const struct cred *cred;
-	sigval_t disccontext;
+	void __user *disccontext;
 	unsigned long ifclaimed;
 	u32 disabled_bulk_eps;
 	bool privileges_dropped;
@@ -90,7 +90,6 @@ struct async {
 	unsigned int ifnum;
 	void __user *userbuffer;
 	void __user *userurb;
-	sigval_t userurb_sigval;
 	struct urb *urb;
 	struct usb_memory *usbm;
 	unsigned int mem_usage;
@@ -583,19 +582,22 @@ static void async_completed(struct urb *urb)
 {
 	struct async *as = urb->context;
 	struct usb_dev_state *ps = as->ps;
+	struct kernel_siginfo sinfo;
 	struct pid *pid = NULL;
 	const struct cred *cred = NULL;
 	unsigned long flags;
-	sigval_t addr;
-	int signr, errno;
+	int signr;
 
 	spin_lock_irqsave(&ps->lock, flags);
 	list_move_tail(&as->asynclist, &ps->async_completed);
 	as->status = urb->status;
 	signr = as->signr;
 	if (signr) {
-		errno = as->status;
-		addr = as->userurb_sigval;
+		clear_siginfo(&sinfo);
+		sinfo.si_signo = as->signr;
+		sinfo.si_errno = as->status;
+		sinfo.si_code = SI_ASYNCIO;
+		sinfo.si_addr = as->userurb;
 		pid = get_pid(as->pid);
 		cred = get_cred(as->cred);
 	}
@@ -613,7 +615,7 @@ static void async_completed(struct urb *urb)
 	spin_unlock_irqrestore(&ps->lock, flags);
 
 	if (signr) {
-		kill_pid_usb_asyncio(signr, errno, addr, pid, cred);
+		kill_pid_info_as_cred(sinfo.si_signo, &sinfo, pid, cred);
 		put_pid(pid);
 		put_cred(cred);
 	}
@@ -1425,7 +1427,7 @@ find_memory_area(struct usb_dev_state *ps, const struct usbdevfs_urb *uurb)
 
 static int proc_do_submiturb(struct usb_dev_state *ps, struct usbdevfs_urb *uurb,
 			struct usbdevfs_iso_packet_desc __user *iso_frame_desc,
-			void __user *arg, sigval_t userurb_sigval)
+			void __user *arg)
 {
 	struct usbdevfs_iso_packet_desc *isopkt = NULL;
 	struct usb_host_endpoint *ep;
@@ -1725,7 +1727,6 @@ static int proc_do_submiturb(struct usb_dev_state *ps, struct usbdevfs_urb *uurb
 	isopkt = NULL;
 	as->ps = ps;
 	as->userurb = arg;
-	as->userurb_sigval = userurb_sigval;
 	if (as->usbm) {
 		unsigned long uurb_start = (unsigned long)uurb->buffer;
 
@@ -1800,17 +1801,13 @@ static int proc_do_submiturb(struct usb_dev_state *ps, struct usbdevfs_urb *uurb
 static int proc_submiturb(struct usb_dev_state *ps, void __user *arg)
 {
 	struct usbdevfs_urb uurb;
-	sigval_t userurb_sigval;
 
 	if (copy_from_user(&uurb, arg, sizeof(uurb)))
 		return -EFAULT;
 
-	memset(&userurb_sigval, 0, sizeof(userurb_sigval));
-	userurb_sigval.sival_ptr = arg;
-
 	return proc_do_submiturb(ps, &uurb,
 			(((struct usbdevfs_urb __user *)arg)->iso_frame_desc),
-			arg, userurb_sigval);
+			arg);
 }
 
 static int proc_unlinkurb(struct usb_dev_state *ps, void __user *arg)
@@ -1980,7 +1977,7 @@ static int proc_disconnectsignal_compat(struct usb_dev_state *ps, void __user *a
 	if (copy_from_user(&ds, arg, sizeof(ds)))
 		return -EFAULT;
 	ps->discsignr = ds.signr;
-	ps->disccontext.sival_int = ds.context;
+	ps->disccontext = compat_ptr(ds.context);
 	return 0;
 }
 
@@ -2008,17 +2005,13 @@ static int get_urb32(struct usbdevfs_urb *kurb,
 static int proc_submiturb_compat(struct usb_dev_state *ps, void __user *arg)
 {
 	struct usbdevfs_urb uurb;
-	sigval_t userurb_sigval;
 
 	if (get_urb32(&uurb, (struct usbdevfs_urb32 __user *)arg))
 		return -EFAULT;
 
-	memset(&userurb_sigval, 0, sizeof(userurb_sigval));
-	userurb_sigval.sival_int = ptr_to_compat(arg);
-
 	return proc_do_submiturb(ps, &uurb,
 			((struct usbdevfs_urb32 __user *)arg)->iso_frame_desc,
-			arg, userurb_sigval);
+			arg);
 }
 
 static int processcompl_compat(struct async *as, void __user * __user *arg)
@@ -2099,7 +2092,7 @@ static int proc_disconnectsignal(struct usb_dev_state *ps, void __user *arg)
 	if (copy_from_user(&ds, arg, sizeof(ds)))
 		return -EFAULT;
 	ps->discsignr = ds.signr;
-	ps->disccontext.sival_ptr = ds.context;
+	ps->disccontext = ds.context;
 	return 0;
 }
 
@@ -2621,15 +2614,22 @@ const struct file_operations usbdev_file_operations = {
 static void usbdev_remove(struct usb_device *udev)
 {
 	struct usb_dev_state *ps;
+	struct kernel_siginfo sinfo;
 
 	while (!list_empty(&udev->filelist)) {
 		ps = list_entry(udev->filelist.next, struct usb_dev_state, list);
 		destroy_all_async(ps);
 		wake_up_all(&ps->wait);
 		list_del_init(&ps->list);
-		if (ps->discsignr)
-			kill_pid_usb_asyncio(ps->discsignr, EPIPE, ps->disccontext,
-					     ps->disc_pid, ps->cred);
+		if (ps->discsignr) {
+			clear_siginfo(&sinfo);
+			sinfo.si_signo = ps->discsignr;
+			sinfo.si_errno = EPIPE;
+			sinfo.si_code = SI_ASYNCIO;
+			sinfo.si_addr = ps->disccontext;
+			kill_pid_info_as_cred(ps->discsignr, &sinfo,
+					ps->disc_pid, ps->cred);
+		}
 	}
 }
 

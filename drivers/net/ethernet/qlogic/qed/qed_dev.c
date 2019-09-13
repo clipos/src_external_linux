@@ -3140,12 +3140,14 @@ static int qed_hw_get_nvm_info(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 			cdev->mf_bits = BIT(QED_MF_OVLAN_CLSS) |
 					BIT(QED_MF_LLH_PROTO_CLSS) |
 					BIT(QED_MF_UFP_SPECIFIC) |
-					BIT(QED_MF_8021Q_TAGGING);
+					BIT(QED_MF_8021Q_TAGGING) |
+					BIT(QED_MF_DONT_ADD_VLAN0_TAG);
 			break;
 		case NVM_CFG1_GLOB_MF_MODE_BD:
 			cdev->mf_bits = BIT(QED_MF_OVLAN_CLSS) |
 					BIT(QED_MF_LLH_PROTO_CLSS) |
-					BIT(QED_MF_8021AD_TAGGING);
+					BIT(QED_MF_8021AD_TAGGING) |
+					BIT(QED_MF_DONT_ADD_VLAN0_TAG);
 			break;
 		case NVM_CFG1_GLOB_MF_MODE_NPAR1_0:
 			cdev->mf_bits = BIT(QED_MF_LLH_MAC_CLSS) |
@@ -3441,7 +3443,6 @@ static void qed_nvm_info_free(struct qed_hwfn *p_hwfn)
 static int qed_hw_prepare_single(struct qed_hwfn *p_hwfn,
 				 void __iomem *p_regview,
 				 void __iomem *p_doorbells,
-				 u64 db_phys_addr,
 				 enum qed_pci_personality personality)
 {
 	struct qed_dev *cdev = p_hwfn->cdev;
@@ -3450,7 +3451,6 @@ static int qed_hw_prepare_single(struct qed_hwfn *p_hwfn,
 	/* Split PCI bars evenly between hwfns */
 	p_hwfn->regview = p_regview;
 	p_hwfn->doorbells = p_doorbells;
-	p_hwfn->db_phys_addr = db_phys_addr;
 
 	if (IS_VF(p_hwfn->cdev))
 		return qed_vf_hw_prepare(p_hwfn);
@@ -3546,9 +3546,7 @@ int qed_hw_prepare(struct qed_dev *cdev,
 	/* Initialize the first hwfn - will learn number of hwfns */
 	rc = qed_hw_prepare_single(p_hwfn,
 				   cdev->regview,
-				   cdev->doorbells,
-				   cdev->db_phys_addr,
-				   personality);
+				   cdev->doorbells, personality);
 	if (rc)
 		return rc;
 
@@ -3557,25 +3555,22 @@ int qed_hw_prepare(struct qed_dev *cdev,
 	/* Initialize the rest of the hwfns */
 	if (cdev->num_hwfns > 1) {
 		void __iomem *p_regview, *p_doorbell;
-		u64 db_phys_addr;
-		u32 offset;
+		u8 __iomem *addr;
 
 		/* adjust bar offset for second engine */
-		offset = qed_hw_bar_size(p_hwfn, p_hwfn->p_main_ptt,
-					 BAR_ID_0) / 2;
-		p_regview = cdev->regview + offset;
+		addr = cdev->regview +
+		       qed_hw_bar_size(p_hwfn, p_hwfn->p_main_ptt,
+				       BAR_ID_0) / 2;
+		p_regview = addr;
 
-		offset = qed_hw_bar_size(p_hwfn, p_hwfn->p_main_ptt,
-					 BAR_ID_1) / 2;
-
-		p_doorbell = cdev->doorbells + offset;
-
-		db_phys_addr = cdev->db_phys_addr + offset;
+		addr = cdev->doorbells +
+		       qed_hw_bar_size(p_hwfn, p_hwfn->p_main_ptt,
+				       BAR_ID_1) / 2;
+		p_doorbell = addr;
 
 		/* prepare second hw function */
 		rc = qed_hw_prepare_single(&cdev->hwfns[1], p_regview,
-					   p_doorbell, db_phys_addr,
-					   personality);
+					   p_doorbell, personality);
 
 		/* in case of error, need to free the previously
 		 * initiliazed hwfn 0.

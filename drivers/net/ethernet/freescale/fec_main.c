@@ -1655,7 +1655,7 @@ static void fec_get_mac(struct net_device *ndev)
 		struct device_node *np = fep->pdev->dev.of_node;
 		if (np) {
 			const char *mac = of_get_mac_address(np);
-			if (mac)
+			if (!IS_ERR(mac))
 				iap = (unsigned char *) mac;
 		}
 	}
@@ -1689,10 +1689,10 @@ static void fec_get_mac(struct net_device *ndev)
 	 */
 	if (!is_valid_ether_addr(iap)) {
 		/* Report it and use a random ethernet address instead */
-		dev_err(&fep->pdev->dev, "Invalid MAC address: %pM\n", iap);
+		netdev_err(ndev, "Invalid MAC address: %pM\n", iap);
 		eth_hw_addr_random(ndev);
-		dev_info(&fep->pdev->dev, "Using random MAC address: %pM\n",
-			 ndev->dev_addr);
+		netdev_info(ndev, "Using random MAC address: %pM\n",
+			    ndev->dev_addr);
 		return;
 	}
 

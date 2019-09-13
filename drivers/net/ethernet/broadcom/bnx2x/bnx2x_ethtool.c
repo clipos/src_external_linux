@@ -182,9 +182,7 @@ static const struct {
 	{ STATS_OFFSET32(driver_filtered_tx_pkt),
 				4, false, "driver_filtered_tx_pkt" },
 	{ STATS_OFFSET32(eee_tx_lpi),
-				4, true, "Tx LPI entry count"},
-	{ STATS_OFFSET32(ptp_skip_tx_ts),
-				4, false, "ptp_skipped_tx_tstamp" },
+				4, true, "Tx LPI entry count"}
 };
 
 #define BNX2X_NUM_STATS		ARRAY_SIZE(bnx2x_stats_arr)
@@ -2626,7 +2624,6 @@ static int bnx2x_run_loopback(struct bnx2x *bp, int loopback_mode)
 	wmb();
 	DOORBELL_RELAXED(bp, txdata->cid, txdata->tx_db.raw);
 
-	mmiowb();
 	barrier();
 
 	num_pkts++;

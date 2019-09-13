@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Pluggable TCP congestion control support and newReno
  * congestion control.
@@ -332,8 +333,7 @@ out:
  * tcp_reinit_congestion_control (if the current congestion control was
  * already initialized.
  */
-int tcp_set_congestion_control(struct sock *sk, const char *name, bool load,
-			       bool reinit, bool cap_net_admin)
+int tcp_set_congestion_control(struct sock *sk, const char *name, bool load, bool reinit)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	const struct tcp_congestion_ops *ca;
@@ -369,7 +369,8 @@ int tcp_set_congestion_control(struct sock *sk, const char *name, bool load,
 		} else {
 			err = -EBUSY;
 		}
-	} else if (!((ca->flags & TCP_CONG_NON_RESTRICTED) || cap_net_admin)) {
+	} else if (!((ca->flags & TCP_CONG_NON_RESTRICTED) ||
+		     ns_capable(sock_net(sk)->user_ns, CAP_NET_ADMIN))) {
 		err = -EPERM;
 	} else if (!try_module_get(ca->owner)) {
 		err = -EBUSY;

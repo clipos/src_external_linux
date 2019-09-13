@@ -1,16 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2009 Texas Instruments Inc
  * Copyright (C) 2014 Lad, Prabhakar <prabhakar.csengg@gmail.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  *
  * TODO : add support for VBI & HBI data service
  *	  add static buffer allocation
@@ -1254,7 +1245,8 @@ static int vpif_s_dv_timings(struct file *file, void *priv,
 	} else {
 		std_info->l5 = std_info->vsize - (bt->vfrontporch - 1);
 	}
-	strncpy(std_info->name, "Custom timings BT656/1120", VPIF_MAX_NAME);
+	strscpy(std_info->name, "Custom timings BT656/1120",
+		sizeof(std_info->name));
 	std_info->width = bt->width;
 	std_info->height = bt->height;
 	std_info->frm_fmt = bt->interlaced ? 0 : 1;
@@ -1382,14 +1374,6 @@ vpif_init_free_channel_objects:
 	for (j = 0; j < free_channel_objects_index; j++)
 		kfree(vpif_obj.dev[j]);
 	return err;
-}
-
-static inline void free_vpif_objs(void)
-{
-	int i;
-
-	for (i = 0; i < VPIF_CAPTURE_MAX_DEVICES; i++)
-		kfree(vpif_obj.dev[i]);
 }
 
 static int vpif_async_bound(struct v4l2_async_notifier *notifier,
@@ -1661,7 +1645,7 @@ static __init int vpif_probe(struct platform_device *pdev)
 	err = v4l2_device_register(vpif_dev, &vpif_obj.v4l2_dev);
 	if (err) {
 		v4l2_err(vpif_dev->driver, "Error registering v4l2 device\n");
-		goto vpif_free;
+		goto cleanup;
 	}
 
 	while ((res = platform_get_resource(pdev, IORESOURCE_IRQ, res_idx))) {
@@ -1708,9 +1692,7 @@ static __init int vpif_probe(struct platform_device *pdev)
 				  "registered sub device %s\n",
 				   subdevdata->name);
 		}
-		err = vpif_probe_complete();
-		if (err)
-			goto probe_subdev_out;
+		vpif_probe_complete();
 	} else {
 		vpif_obj.notifier.ops = &vpif_async_ops;
 		err = v4l2_async_notifier_register(&vpif_obj.v4l2_dev,
@@ -1729,8 +1711,6 @@ probe_subdev_out:
 	kfree(vpif_obj.sd);
 vpif_unregister:
 	v4l2_device_unregister(&vpif_obj.v4l2_dev);
-vpif_free:
-	free_vpif_objs();
 cleanup:
 	v4l2_async_notifier_cleanup(&vpif_obj.notifier);
 

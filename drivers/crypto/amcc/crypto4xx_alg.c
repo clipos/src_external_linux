@@ -1,18 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * AMCC SoC PPC4xx Crypto Driver
  *
  * Copyright (c) 2008 Applied Micro Circuits Corporation.
  * All rights reserved. James Hsiao <jhsiao@amcc.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  *
  * This file implements the Linux crypto algorithms.
  */
@@ -76,15 +67,11 @@ static void set_dynamic_sa_command_1(struct dynamic_sa_ctl *sa, u32 cm,
 }
 
 static inline int crypto4xx_crypt(struct skcipher_request *req,
-				  const unsigned int ivlen, bool decrypt,
-				  bool check_blocksize)
+				  const unsigned int ivlen, bool decrypt)
 {
 	struct crypto_skcipher *cipher = crypto_skcipher_reqtfm(req);
 	struct crypto4xx_ctx *ctx = crypto_skcipher_ctx(cipher);
 	__le32 iv[AES_IV_SIZE];
-
-	if (check_blocksize && !IS_ALIGNED(req->cryptlen, AES_BLOCK_SIZE))
-		return -EINVAL;
 
 	if (ivlen)
 		crypto4xx_memcpy_to_le32(iv, req->iv, ivlen);
@@ -94,34 +81,24 @@ static inline int crypto4xx_crypt(struct skcipher_request *req,
 		ctx->sa_len, 0, NULL);
 }
 
-int crypto4xx_encrypt_noiv_block(struct skcipher_request *req)
+int crypto4xx_encrypt_noiv(struct skcipher_request *req)
 {
-	return crypto4xx_crypt(req, 0, false, true);
+	return crypto4xx_crypt(req, 0, false);
 }
 
-int crypto4xx_encrypt_iv_stream(struct skcipher_request *req)
+int crypto4xx_encrypt_iv(struct skcipher_request *req)
 {
-	return crypto4xx_crypt(req, AES_IV_SIZE, false, false);
+	return crypto4xx_crypt(req, AES_IV_SIZE, false);
 }
 
-int crypto4xx_decrypt_noiv_block(struct skcipher_request *req)
+int crypto4xx_decrypt_noiv(struct skcipher_request *req)
 {
-	return crypto4xx_crypt(req, 0, true, true);
+	return crypto4xx_crypt(req, 0, true);
 }
 
-int crypto4xx_decrypt_iv_stream(struct skcipher_request *req)
+int crypto4xx_decrypt_iv(struct skcipher_request *req)
 {
-	return crypto4xx_crypt(req, AES_IV_SIZE, true, false);
-}
-
-int crypto4xx_encrypt_iv_block(struct skcipher_request *req)
-{
-	return crypto4xx_crypt(req, AES_IV_SIZE, false, true);
-}
-
-int crypto4xx_decrypt_iv_block(struct skcipher_request *req)
-{
-	return crypto4xx_crypt(req, AES_IV_SIZE, true, true);
+	return crypto4xx_crypt(req, AES_IV_SIZE, true);
 }
 
 /**
@@ -278,10 +255,10 @@ crypto4xx_ctr_crypt(struct skcipher_request *req, bool encrypt)
 	 * overlow.
 	 */
 	if (counter + nblks < counter) {
-		struct skcipher_request *subreq = skcipher_request_ctx(req);
+		SYNC_SKCIPHER_REQUEST_ON_STACK(subreq, ctx->sw_cipher.cipher);
 		int ret;
 
-		skcipher_request_set_tfm(subreq, ctx->sw_cipher.cipher);
+		skcipher_request_set_sync_tfm(subreq, ctx->sw_cipher.cipher);
 		skcipher_request_set_callback(subreq, req->base.flags,
 			NULL, NULL);
 		skcipher_request_set_crypt(subreq, req->src, req->dst,
@@ -292,8 +269,8 @@ crypto4xx_ctr_crypt(struct skcipher_request *req, bool encrypt)
 		return ret;
 	}
 
-	return encrypt ? crypto4xx_encrypt_iv_stream(req)
-		       : crypto4xx_decrypt_iv_stream(req);
+	return encrypt ? crypto4xx_encrypt_iv(req)
+		       : crypto4xx_decrypt_iv(req);
 }
 
 static int crypto4xx_sk_setup_fallback(struct crypto4xx_ctx *ctx,
@@ -303,14 +280,14 @@ static int crypto4xx_sk_setup_fallback(struct crypto4xx_ctx *ctx,
 {
 	int rc;
 
-	crypto_skcipher_clear_flags(ctx->sw_cipher.cipher,
+	crypto_sync_skcipher_clear_flags(ctx->sw_cipher.cipher,
 				    CRYPTO_TFM_REQ_MASK);
-	crypto_skcipher_set_flags(ctx->sw_cipher.cipher,
+	crypto_sync_skcipher_set_flags(ctx->sw_cipher.cipher,
 		crypto_skcipher_get_flags(cipher) & CRYPTO_TFM_REQ_MASK);
-	rc = crypto_skcipher_setkey(ctx->sw_cipher.cipher, key, keylen);
+	rc = crypto_sync_skcipher_setkey(ctx->sw_cipher.cipher, key, keylen);
 	crypto_skcipher_clear_flags(cipher, CRYPTO_TFM_RES_MASK);
 	crypto_skcipher_set_flags(cipher,
-		crypto_skcipher_get_flags(ctx->sw_cipher.cipher) &
+		crypto_sync_skcipher_get_flags(ctx->sw_cipher.cipher) &
 			CRYPTO_TFM_RES_MASK);
 
 	return rc;

@@ -1307,10 +1307,15 @@ static void __spi_pump_messages(struct spi_controller *ctlr, bool in_kthread)
 		ret = ctlr->prepare_transfer_hardware(ctlr);
 		if (ret) {
 			dev_err(&ctlr->dev,
-				"failed to prepare transfer hardware\n");
+				"failed to prepare transfer hardware: %d\n",
+				ret);
 
 			if (ctlr->auto_runtime_pm)
 				pm_runtime_put(ctlr->dev.parent);
+
+			ctlr->cur_msg->status = ret;
+			spi_finalize_current_message(ctlr);
+
 			mutex_unlock(&ctlr->io_mutex);
 			return;
 		}
@@ -2267,7 +2272,7 @@ int spi_register_controller(struct spi_controller *ctlr)
 {
 	struct device		*dev = ctlr->dev.parent;
 	struct boardinfo	*bi;
-	int			status = -ENODEV;
+	int			status;
 	int			id, first_dynamic;
 
 	if (!dev)
@@ -2281,6 +2286,11 @@ int spi_register_controller(struct spi_controller *ctlr)
 	if (status)
 		return status;
 
+	/* even if it's just one always-selected device, there must
+	 * be at least one chipselect
+	 */
+	if (ctlr->num_chipselect == 0)
+		return -EINVAL;
 	if (ctlr->bus_num >= 0) {
 		/* devices with a fixed bus num must check-in with the num */
 		mutex_lock(&board_lock);
@@ -2350,13 +2360,6 @@ int spi_register_controller(struct spi_controller *ctlr)
 				return status;
 		}
 	}
-
-	/*
-	 * Even if it's just one always-selected device, there must
-	 * be at least one chipselect.
-	 */
-	if (!ctlr->num_chipselect)
-		return -EINVAL;
 
 	status = device_add(&ctlr->dev);
 	if (status < 0) {
@@ -2790,11 +2793,6 @@ static int __spi_split_transfer_maxsize(struct spi_controller *ctlr,
 	size_t offset;
 	size_t count, i;
 
-	/* warn once about this fact that we are splitting a transfer */
-	dev_warn_once(&msg->spi->dev,
-		      "spi_transfer of length %i exceed max length of %zu - needed to split transfers\n",
-		      xfer->len, maxsize);
-
 	/* calculate how many we have to replace */
 	count = DIV_ROUND_UP(xfer->len, maxsize);
 
@@ -2952,6 +2950,11 @@ int spi_setup(struct spi_device *spi)
 	 * so it is ignored here.
 	 */
 	bad_bits = spi->mode & ~(spi->controller->mode_bits | SPI_CS_WORD);
+	/* nothing prevents from working with active-high CS in case if it
+	 * is driven by GPIO.
+	 */
+	if (gpio_is_valid(spi->cs_gpio))
+		bad_bits &= ~SPI_CS_HIGH;
 	ugly_bits = bad_bits &
 		    (SPI_TX_DUAL | SPI_TX_QUAD | SPI_TX_OCTAL |
 		     SPI_RX_DUAL | SPI_RX_QUAD | SPI_RX_OCTAL);
@@ -2996,6 +2999,21 @@ int spi_setup(struct spi_device *spi)
 	return status;
 }
 EXPORT_SYMBOL_GPL(spi_setup);
+
+/**
+ * spi_set_cs_timing - configure CS setup, hold, and inactive delays
+ * @spi: the device that requires specific CS timing configuration
+ * @setup: CS setup time in terms of clock count
+ * @hold: CS hold time in terms of clock count
+ * @inactive_dly: CS inactive delay between transfers in terms of clock count
+ */
+void spi_set_cs_timing(struct spi_device *spi, u8 setup, u8 hold,
+		       u8 inactive_dly)
+{
+	if (spi->controller->set_cs_timing)
+		spi->controller->set_cs_timing(spi, setup, hold, inactive_dly);
+}
+EXPORT_SYMBOL_GPL(spi_set_cs_timing);
 
 static int __spi_validate(struct spi_device *spi, struct spi_message *message)
 {
@@ -3071,8 +3089,6 @@ static int __spi_validate(struct spi_device *spi, struct spi_message *message)
 
 		if (!xfer->speed_hz)
 			xfer->speed_hz = spi->max_speed_hz;
-		if (!xfer->speed_hz)
-			xfer->speed_hz = ctlr->max_speed_hz;
 
 		if (ctlr->max_speed_hz && xfer->speed_hz > ctlr->max_speed_hz)
 			xfer->speed_hz = ctlr->max_speed_hz;

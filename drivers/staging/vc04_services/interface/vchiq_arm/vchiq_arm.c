@@ -1,35 +1,7 @@
-/**
+// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
+/*
  * Copyright (c) 2014 Raspberry Pi (Trading) Ltd. All rights reserved.
  * Copyright (c) 2010-2012 Broadcom. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions, and the following disclaimer,
- *    without modification.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. The names of the above-listed copyright holders may not be used
- *    to endorse or promote products derived from this software without
- *    specific prior written permission.
- *
- * ALTERNATIVELY, this software may be distributed under the terms of the
- * GNU General Public License ("GPL") version 2, as published by the Free
- * Software Foundation.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
- * IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
- * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
- * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
- * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
- * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
- * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include <linux/kernel.h>
@@ -560,8 +532,7 @@ add_completion(VCHIQ_INSTANCE_T instance, VCHIQ_REASON_T reason,
 		vchiq_log_trace(vchiq_arm_log_level,
 			"%s - completion queue full", __func__);
 		DEBUG_COUNT(COMPLETION_QUEUE_FULL_COUNT);
-		if (wait_for_completion_interruptible(
-					&instance->remove_event)) {
+		if (wait_for_completion_killable(&instance->remove_event)) {
 			vchiq_log_info(vchiq_arm_log_level,
 				"service_callback interrupted");
 			return VCHIQ_RETRY;
@@ -672,7 +643,7 @@ service_callback(VCHIQ_REASON_T reason, struct vchiq_header *header,
 			}
 
 			DEBUG_TRACE(SERVICE_CALLBACK_LINE);
-			if (wait_for_completion_interruptible(
+			if (wait_for_completion_killable(
 						&user_service->remove_event)
 				!= 0) {
 				vchiq_log_info(vchiq_arm_log_level,
@@ -1007,7 +978,7 @@ vchiq_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		   has been closed until the client library calls the
 		   CLOSE_DELIVERED ioctl, signalling close_event. */
 		if (user_service->close_pending &&
-			wait_for_completion_interruptible(
+			wait_for_completion_killable(
 				&user_service->close_event))
 			status = VCHIQ_RETRY;
 		break;
@@ -1183,7 +1154,7 @@ vchiq_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 			DEBUG_TRACE(AWAIT_COMPLETION_LINE);
 			mutex_unlock(&instance->completion_mutex);
-			rc = wait_for_completion_interruptible(
+			rc = wait_for_completion_killable(
 						&instance->insert_event);
 			mutex_lock(&instance->completion_mutex);
 			if (rc != 0) {
@@ -1353,7 +1324,7 @@ vchiq_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			do {
 				spin_unlock(&msg_queue_spinlock);
 				DEBUG_TRACE(DEQUEUE_MESSAGE_LINE);
-				if (wait_for_completion_interruptible(
+				if (wait_for_completion_killable(
 					&user_service->insert_event)) {
 					vchiq_log_info(vchiq_arm_log_level,
 						"DEQUEUE_MESSAGE interrupted");
@@ -1487,16 +1458,16 @@ vchiq_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	if ((status == VCHIQ_SUCCESS) && (ret < 0) && (ret != -EINTR) &&
 		(ret != -EWOULDBLOCK))
 		vchiq_log_info(vchiq_arm_log_level,
-			"  ioctl instance %lx, cmd %s -> status %d, %ld",
-			(unsigned long)instance,
+			"  ioctl instance %pK, cmd %s -> status %d, %ld",
+			instance,
 			(_IOC_NR(cmd) <= VCHIQ_IOC_MAX) ?
 				ioctl_names[_IOC_NR(cmd)] :
 				"<invalid>",
 			status, ret);
 	else
 		vchiq_log_trace(vchiq_arm_log_level,
-			"  ioctl instance %lx, cmd %s -> status %d, %ld",
-			(unsigned long)instance,
+			"  ioctl instance %pK, cmd %s -> status %d, %ld",
+			instance,
 			(_IOC_NR(cmd) <= VCHIQ_IOC_MAX) ?
 				ioctl_names[_IOC_NR(cmd)] :
 				"<invalid>",
@@ -1541,9 +1512,7 @@ vchiq_compat_ioctl_create_service(
 	if (!args)
 		return -EFAULT;
 
-	if (copy_from_user(&args32,
-			   (struct vchiq_create_service32 __user *)arg,
-			   sizeof(args32)))
+	if (copy_from_user(&args32, ptrargs32, sizeof(args32)))
 		return -EFAULT;
 
 	if (put_user(args32.params.fourcc, &args->params.fourcc) ||
@@ -1594,7 +1563,7 @@ vchiq_compat_ioctl_queue_message(struct file *file,
 				 unsigned int cmd,
 				 unsigned long arg)
 {
-	struct vchiq_queue_message *args;
+	struct vchiq_queue_message __user *args;
 	struct vchiq_element __user *elements;
 	struct vchiq_queue_message32 args32;
 	unsigned int count;
@@ -1663,17 +1632,15 @@ vchiq_compat_ioctl_queue_bulk(struct file *file,
 {
 	struct vchiq_queue_bulk_transfer __user *args;
 	struct vchiq_queue_bulk_transfer32 args32;
-	struct vchiq_queue_bulk_transfer32 *ptrargs32 =
-		(struct vchiq_queue_bulk_transfer32 *)arg;
+	struct vchiq_queue_bulk_transfer32 __user *ptrargs32 =
+		(struct vchiq_queue_bulk_transfer32 __user *)arg;
 	long ret;
 
 	args = compat_alloc_user_space(sizeof(*args));
 	if (!args)
 		return -EFAULT;
 
-	if (copy_from_user(&args32,
-			   (struct vchiq_queue_bulk_transfer32 __user *)arg,
-			   sizeof(args32)))
+	if (copy_from_user(&args32, ptrargs32, sizeof(args32)))
 		return -EFAULT;
 
 	if (put_user(args32.handle, &args->handle) ||
@@ -2361,7 +2328,7 @@ vchiq_keepalive_thread_func(void *v)
 	while (1) {
 		long rc = 0, uc = 0;
 
-		if (wait_for_completion_interruptible(&arm_state->ka_evt)
+		if (wait_for_completion_killable(&arm_state->ka_evt)
 				!= 0) {
 			vchiq_log_error(vchiq_susp_log_level,
 				"%s interrupted", __func__);
@@ -2612,7 +2579,7 @@ block_resume(struct vchiq_arm_state *arm_state)
 		write_unlock_bh(&arm_state->susp_res_lock);
 		vchiq_log_info(vchiq_susp_log_level, "%s wait for previously "
 			"blocked clients", __func__);
-		if (wait_for_completion_interruptible_timeout(
+		if (wait_for_completion_killable_timeout(
 				&arm_state->blocked_blocker, timeout_val)
 					<= 0) {
 			vchiq_log_error(vchiq_susp_log_level, "%s wait for "
@@ -2638,7 +2605,7 @@ block_resume(struct vchiq_arm_state *arm_state)
 		write_unlock_bh(&arm_state->susp_res_lock);
 		vchiq_log_info(vchiq_susp_log_level, "%s wait for resume",
 			__func__);
-		if (wait_for_completion_interruptible_timeout(
+		if (wait_for_completion_killable_timeout(
 				&arm_state->vc_resume_complete, timeout_val)
 					<= 0) {
 			vchiq_log_error(vchiq_susp_log_level, "%s wait for "
@@ -2845,7 +2812,7 @@ vchiq_arm_force_suspend(struct vchiq_state *state)
 	do {
 		write_unlock_bh(&arm_state->susp_res_lock);
 
-		rc = wait_for_completion_interruptible_timeout(
+		rc = wait_for_completion_killable_timeout(
 				&arm_state->vc_suspend_complete,
 				msecs_to_jiffies(FORCE_SUSPEND_TIMEOUT_MS));
 
@@ -2941,7 +2908,7 @@ vchiq_arm_allow_resume(struct vchiq_state *state)
 	write_unlock_bh(&arm_state->susp_res_lock);
 
 	if (resume) {
-		if (wait_for_completion_interruptible(
+		if (wait_for_completion_killable(
 			&arm_state->vc_resume_complete) < 0) {
 			vchiq_log_error(vchiq_susp_log_level,
 				"%s interrupted", __func__);

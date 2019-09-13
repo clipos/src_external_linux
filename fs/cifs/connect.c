@@ -323,8 +323,6 @@ static int ip_connect(struct TCP_Server_Info *server);
 static int generic_ip_connect(struct TCP_Server_Info *server);
 static void tlink_rb_insert(struct rb_root *root, struct tcon_link *new_tlink);
 static void cifs_prune_tlinks(struct work_struct *work);
-static int cifs_setup_volume_info(struct smb_vol *volume_info, char *mount_data,
-					const char *devname, bool is_smb3);
 static char *extract_hostname(const char *unc);
 
 /*
@@ -566,6 +564,12 @@ cifs_reconnect(struct TCP_Server_Info *server)
 		mid_entry = list_entry(tmp, struct mid_q_entry, qhead);
 		list_del_init(&mid_entry->qhead);
 		mid_entry->callback(mid_entry);
+	}
+
+	if (cifs_rdma_enabled(server)) {
+		mutex_lock(&server->srv_mutex);
+		smbd_destroy(server);
+		mutex_unlock(&server->srv_mutex);
 	}
 
 	do {
@@ -933,10 +937,8 @@ static void clean_demultiplex_info(struct TCP_Server_Info *server)
 	wake_up_all(&server->request_q);
 	/* give those requests time to exit */
 	msleep(125);
-	if (cifs_rdma_enabled(server) && server->smbd_conn) {
-		smbd_destroy(server->smbd_conn);
-		server->smbd_conn = NULL;
-	}
+	if (cifs_rdma_enabled(server))
+		smbd_destroy(server);
 	if (server->ssocket) {
 		sock_release(server->ssocket);
 		server->ssocket = NULL;
@@ -1221,11 +1223,11 @@ next_pdu:
 					 atomic_read(&midCount));
 				cifs_dump_mem("Received Data is: ", bufs[i],
 					      HEADER_SIZE(server));
-				smb2_add_credits_from_hdr(bufs[i], server);
 #ifdef CONFIG_CIFS_DEBUG2
 				if (server->ops->dump_detail)
 					server->ops->dump_detail(bufs[i],
 								 server);
+				smb2_add_credits_from_hdr(bufs[i], server);
 				cifs_dump_mids(server);
 #endif /* CIFS_DEBUG2 */
 			}
@@ -2446,6 +2448,10 @@ match_port(struct TCP_Server_Info *server, struct sockaddr *addr)
 {
 	__be16 port, *sport;
 
+	/* SMBDirect manages its own ports, don't match it here */
+	if (server->rdma)
+		return true;
+
 	switch (addr->sa_family) {
 	case AF_INET:
 		sport = &((struct sockaddr_in *) &server->dstaddr)->sin_port;
@@ -2906,8 +2912,7 @@ cifs_find_smb_ses(struct TCP_Server_Info *server, struct smb_vol *vol)
 	return NULL;
 }
 
-static void
-cifs_put_smb_ses(struct cifs_ses *ses)
+void cifs_put_smb_ses(struct cifs_ses *ses)
 {
 	unsigned int rc, xid;
 	struct TCP_Server_Info *server = ses->server;
@@ -3084,7 +3089,7 @@ cifs_set_cifscreds(struct smb_vol *vol __attribute__((unused)),
  * already got a server reference (server refcount +1). See
  * cifs_get_tcon() for refcount explanations.
  */
-static struct cifs_ses *
+struct cifs_ses *
 cifs_get_smb_ses(struct TCP_Server_Info *server, struct smb_vol *volume_info)
 {
 	int rc = -ENOMEM;
@@ -3455,16 +3460,12 @@ compare_mount_options(struct super_block *sb, struct cifs_mnt_data *mnt_data)
 {
 	struct cifs_sb_info *old = CIFS_SB(sb);
 	struct cifs_sb_info *new = mnt_data->cifs_sb;
-	unsigned int oldflags = old->mnt_cifs_flags & CIFS_MOUNT_MASK;
-	unsigned int newflags = new->mnt_cifs_flags & CIFS_MOUNT_MASK;
 
 	if ((sb->s_flags & CIFS_MS_MASK) != (mnt_data->flags & CIFS_MS_MASK))
 		return 0;
 
-	if (old->mnt_cifs_serverino_autodisabled)
-		newflags &= ~CIFS_MOUNT_SERVER_INUM;
-
-	if (oldflags != newflags)
+	if ((old->mnt_cifs_flags & CIFS_MOUNT_MASK) !=
+	    (new->mnt_cifs_flags & CIFS_MOUNT_MASK))
 		return 0;
 
 	/*
@@ -4395,7 +4396,7 @@ static int mount_do_dfs_failover(const char *path,
 }
 #endif
 
-static int
+int
 cifs_setup_volume_info(struct smb_vol *volume_info, char *mount_data,
 			const char *devname, bool is_smb3)
 {
@@ -4549,7 +4550,7 @@ int cifs_mount(struct cifs_sb_info *cifs_sb, struct smb_vol *vol)
 	struct cifs_tcon *tcon = NULL;
 	struct TCP_Server_Info *server;
 	char *root_path = NULL, *full_path = NULL;
-	char *old_mountdata;
+	char *old_mountdata, *origin_mountdata = NULL;
 	int count;
 
 	rc = mount_get_conns(vol, cifs_sb, &xid, &server, &ses, &tcon);
@@ -4605,6 +4606,14 @@ int cifs_mount(struct cifs_sb_info *cifs_sb, struct smb_vol *vol)
 
 	if (cifs_sb->mountdata == NULL) {
 		rc = -ENOENT;
+		goto error;
+	}
+
+	/* Save DFS root volume information for DFS refresh worker */
+	origin_mountdata = kstrndup(cifs_sb->mountdata,
+				    strlen(cifs_sb->mountdata), GFP_KERNEL);
+	if (!origin_mountdata) {
+		rc = -ENOMEM;
 		goto error;
 	}
 
@@ -4716,7 +4725,7 @@ int cifs_mount(struct cifs_sb_info *cifs_sb, struct smb_vol *vol)
 	}
 	spin_unlock(&cifs_tcp_ses_lock);
 
-	rc = dfs_cache_add_vol(vol, cifs_sb->origin_fullpath);
+	rc = dfs_cache_add_vol(origin_mountdata, vol, cifs_sb->origin_fullpath);
 	if (rc) {
 		kfree(cifs_sb->origin_fullpath);
 		goto error;
@@ -4734,6 +4743,7 @@ out:
 error:
 	kfree(full_path);
 	kfree(root_path);
+	kfree(origin_mountdata);
 	mount_put_conns(cifs_sb, xid, server, ses, tcon);
 	return rc;
 }

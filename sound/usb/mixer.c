@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *   (Tentative) USB Audio Driver for ALSA
  *
@@ -8,22 +9,6 @@
  *   Many codes borrowed from audio.c by
  *	    Alan Cox (alan@lxorguk.ukuu.org.uk)
  *	    Thomas Sailer (sailer@ife.ee.ethz.ch)
- *
- *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
- *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
- *
- *   You should have received a copy of the GNU General Public License
- *   along with this program; if not, write to the Free Software
- *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
- *
  */
 
 /*
@@ -2318,7 +2303,7 @@ static struct procunit_info extunits[] = {
  */
 static int build_audio_procunit(struct mixer_build *state, int unitid,
 				void *raw_desc, struct procunit_info *list,
-				bool extension_unit)
+				char *name)
 {
 	struct uac_processing_unit_descriptor *desc = raw_desc;
 	int num_ins;
@@ -2335,8 +2320,6 @@ static int build_audio_procunit(struct mixer_build *state, int unitid,
 	static struct procunit_info default_info = {
 		0, NULL, default_value_info
 	};
-	const char *name = extension_unit ?
-		"Extension Unit" : "Processing Unit";
 
 	if (desc->bLength < 13) {
 		usb_audio_err(state->chip, "invalid %s descriptor (id %d)\n", name, unitid);
@@ -2450,10 +2433,7 @@ static int build_audio_procunit(struct mixer_build *state, int unitid,
 		} else if (info->name) {
 			strlcpy(kctl->id.name, info->name, sizeof(kctl->id.name));
 		} else {
-			if (extension_unit)
-				nameid = uac_extension_unit_iExtension(desc, state->mixer->protocol);
-			else
-				nameid = uac_processing_unit_iProcessing(desc, state->mixer->protocol);
+			nameid = uac_processing_unit_iProcessing(desc, state->mixer->protocol);
 			len = 0;
 			if (nameid)
 				len = snd_usb_copy_string_desc(state->chip,
@@ -2486,10 +2466,10 @@ static int parse_audio_processing_unit(struct mixer_build *state, int unitid,
 	case UAC_VERSION_2:
 	default:
 		return build_audio_procunit(state, unitid, raw_desc,
-					    procunits, false);
+				procunits, "Processing Unit");
 	case UAC_VERSION_3:
 		return build_audio_procunit(state, unitid, raw_desc,
-					    uac3_procunits, false);
+				uac3_procunits, "Processing Unit");
 	}
 }
 
@@ -2500,7 +2480,8 @@ static int parse_audio_extension_unit(struct mixer_build *state, int unitid,
 	 * Note that we parse extension units with processing unit descriptors.
 	 * That's ok as the layout is the same.
 	 */
-	return build_audio_procunit(state, unitid, raw_desc, extunits, true);
+	return build_audio_procunit(state, unitid, raw_desc,
+				    extunits, "Extension Unit");
 }
 
 /*
@@ -3496,7 +3477,9 @@ int snd_usb_create_mixer(struct snd_usb_audio *chip, int ctrlif,
 	if (err < 0)
 		goto _error;
 
-	snd_usb_mixer_apply_create_quirk(mixer);
+	err = snd_usb_mixer_apply_create_quirk(mixer);
+	if (err < 0)
+		goto _error;
 
 	err = snd_device_new(chip->card, SNDRV_DEV_CODEC, mixer, &dev_ops);
 	if (err < 0)

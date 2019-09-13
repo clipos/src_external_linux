@@ -26,7 +26,7 @@
 static int edac_mc_log_ue = 1;
 static int edac_mc_log_ce = 1;
 static int edac_mc_panic_on_ue;
-static unsigned int edac_mc_poll_msec = 1000;
+static int edac_mc_poll_msec = 1000;
 
 /* Getter functions for above */
 int edac_mc_get_log_ue(void)
@@ -45,30 +45,30 @@ int edac_mc_get_panic_on_ue(void)
 }
 
 /* this is temporary */
-unsigned int edac_mc_get_poll_msec(void)
+int edac_mc_get_poll_msec(void)
 {
 	return edac_mc_poll_msec;
 }
 
 static int edac_set_poll_msec(const char *val, const struct kernel_param *kp)
 {
-	unsigned int i;
+	unsigned long l;
 	int ret;
 
 	if (!val)
 		return -EINVAL;
 
-	ret = kstrtouint(val, 0, &i);
+	ret = kstrtoul(val, 0, &l);
 	if (ret)
 		return ret;
 
-	if (i < 1000)
+	if (l < 1000)
 		return -EINVAL;
 
-	*((unsigned int *)kp->arg) = i;
+	*((unsigned long *)kp->arg) = l;
 
 	/* notify edac_mc engine to reset the poll period */
-	edac_mc_reset_delay_period(i);
+	edac_mc_reset_delay_period(l);
 
 	return 0;
 }
@@ -82,7 +82,7 @@ MODULE_PARM_DESC(edac_mc_log_ue,
 module_param(edac_mc_log_ce, int, 0644);
 MODULE_PARM_DESC(edac_mc_log_ce,
 		 "Log correctable error to console: 0=off 1=on");
-module_param_call(edac_mc_poll_msec, edac_set_poll_msec, param_get_uint,
+module_param_call(edac_mc_poll_msec, edac_set_poll_msec, param_get_int,
 		  &edac_mc_poll_msec, 0644);
 MODULE_PARM_DESC(edac_mc_poll_msec, "Polling period in milliseconds");
 
@@ -404,8 +404,6 @@ static inline int nr_pages_per_csrow(struct csrow_info *csrow)
 static int edac_create_csrow_object(struct mem_ctl_info *mci,
 				    struct csrow_info *csrow, int index)
 {
-	int err;
-
 	csrow->dev.type = &csrow_attr_type;
 	csrow->dev.groups = csrow_dev_groups;
 	device_initialize(&csrow->dev);
@@ -417,11 +415,7 @@ static int edac_create_csrow_object(struct mem_ctl_info *mci,
 	edac_dbg(0, "creating (virtual) csrow node %s\n",
 		 dev_name(&csrow->dev));
 
-	err = device_add(&csrow->dev);
-	if (err)
-		put_device(&csrow->dev);
-
-	return err;
+	return device_add(&csrow->dev);
 }
 
 /* Create a CSROW object under specifed edac_mc_device */
@@ -449,8 +443,7 @@ error:
 		csrow = mci->csrows[i];
 		if (!nr_pages_per_csrow(csrow))
 			continue;
-
-		device_del(&mci->csrows[i]->dev);
+		put_device(&mci->csrows[i]->dev);
 	}
 
 	return err;
@@ -652,11 +645,9 @@ static int edac_create_dimm_object(struct mem_ctl_info *mci,
 	dev_set_drvdata(&dimm->dev, dimm);
 	pm_runtime_forbid(&mci->dev);
 
-	err = device_add(&dimm->dev);
-	if (err)
-		put_device(&dimm->dev);
+	err =  device_add(&dimm->dev);
 
-	edac_dbg(0, "created rank/dimm device %s\n", dev_name(&dimm->dev));
+	edac_dbg(0, "creating rank/dimm device %s\n", dev_name(&dimm->dev));
 
 	return err;
 }
@@ -937,7 +928,6 @@ int edac_create_sysfs_mci_device(struct mem_ctl_info *mci,
 	err = device_add(&mci->dev);
 	if (err < 0) {
 		edac_dbg(1, "failure: create device %s\n", dev_name(&mci->dev));
-		put_device(&mci->dev);
 		goto out;
 	}
 

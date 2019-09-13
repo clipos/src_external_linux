@@ -257,7 +257,7 @@ int ff_layout_track_ds_error(struct nfs4_flexfile_layout *flo,
 	if (status == 0)
 		return 0;
 
-	if (IS_ERR_OR_NULL(mirror->mirror_ds))
+	if (mirror->mirror_ds == NULL)
 		return -EINVAL;
 
 	dserr = kmalloc(sizeof(*dserr), gfp_flags);

@@ -17,6 +17,7 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/rtc.h>
+#include <linux/audit.h>
 
 #include "ntp_internal.h"
 #include "timekeeping_internal.h"
@@ -42,7 +43,6 @@ static u64			tick_length_base;
 #define MAX_TICKADJ		500LL		/* usecs */
 #define MAX_TICKADJ_SCALED \
 	(((MAX_TICKADJ * NSEC_PER_USEC) << NTP_SCALE_SHIFT) / NTP_INTERVAL_FREQ)
-#define MAX_TAI_OFFSET		100000
 
 /*
  * phase-lock loop variables
@@ -691,8 +691,7 @@ static inline void process_adjtimex_modes(const struct __kernel_timex *txc,
 		time_constant = max(time_constant, 0l);
 	}
 
-	if (txc->modes & ADJ_TAI &&
-			txc->constant >= 0 && txc->constant <= MAX_TAI_OFFSET)
+	if (txc->modes & ADJ_TAI && txc->constant >= 0)
 		*time_tai = txc->constant;
 
 	if (txc->modes & ADJ_OFFSET)
@@ -711,7 +710,7 @@ static inline void process_adjtimex_modes(const struct __kernel_timex *txc,
  * kernel time-keeping variables. used by xntpd.
  */
 int __do_adjtimex(struct __kernel_timex *txc, const struct timespec64 *ts,
-		  s32 *time_tai)
+		  s32 *time_tai, struct audit_ntp_data *ad)
 {
 	int result;
 
@@ -722,13 +721,28 @@ int __do_adjtimex(struct __kernel_timex *txc, const struct timespec64 *ts,
 			/* adjtime() is independent from ntp_adjtime() */
 			time_adjust = txc->offset;
 			ntp_update_frequency();
+
+			audit_ntp_set_old(ad, AUDIT_NTP_ADJUST,	save_adjust);
+			audit_ntp_set_new(ad, AUDIT_NTP_ADJUST,	time_adjust);
 		}
 		txc->offset = save_adjust;
 	} else {
-
 		/* If there are input parameters, then process them: */
-		if (txc->modes)
+		if (txc->modes) {
+			audit_ntp_set_old(ad, AUDIT_NTP_OFFSET,	time_offset);
+			audit_ntp_set_old(ad, AUDIT_NTP_FREQ,	time_freq);
+			audit_ntp_set_old(ad, AUDIT_NTP_STATUS,	time_status);
+			audit_ntp_set_old(ad, AUDIT_NTP_TAI,	*time_tai);
+			audit_ntp_set_old(ad, AUDIT_NTP_TICK,	tick_usec);
+
 			process_adjtimex_modes(txc, time_tai);
+
+			audit_ntp_set_new(ad, AUDIT_NTP_OFFSET,	time_offset);
+			audit_ntp_set_new(ad, AUDIT_NTP_FREQ,	time_freq);
+			audit_ntp_set_new(ad, AUDIT_NTP_STATUS,	time_status);
+			audit_ntp_set_new(ad, AUDIT_NTP_TAI,	*time_tai);
+			audit_ntp_set_new(ad, AUDIT_NTP_TICK,	tick_usec);
+		}
 
 		txc->offset = shift_right(time_offset * NTP_INTERVAL_FREQ,
 				  NTP_SCALE_SHIFT);

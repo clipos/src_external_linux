@@ -142,20 +142,22 @@ static int mlx5e_tx_reporter_timeout_recover(struct mlx5e_txqsq *sq)
 {
 	struct mlx5_eq_comp *eq = sq->cq.mcq.eq;
 	u32 eqe_count;
+	int ret;
 
 	netdev_err(sq->channel->netdev, "EQ 0x%x: Cons = 0x%x, irqn = 0x%x\n",
 		   eq->core.eqn, eq->core.cons_index, eq->core.irqn);
 
 	eqe_count = mlx5_eq_poll_irq_disabled(eq);
+	ret = eqe_count ? false : true;
 	if (!eqe_count) {
 		clear_bit(MLX5E_SQ_STATE_ENABLED, &sq->state);
-		return -EIO;
+		return ret;
 	}
 
 	netdev_err(sq->channel->netdev, "Recover %d eqes on EQ 0x%x\n",
 		   eqe_count, eq->core.eqn);
 	sq->channel->stats->eq_rearm++;
-	return 0;
+	return ret;
 }
 
 int mlx5e_tx_reporter_timeout(struct mlx5e_txqsq *sq)
@@ -262,13 +264,13 @@ static int mlx5e_tx_reporter_diagnose(struct devlink_health_reporter *reporter,
 
 		err = mlx5_core_query_sq_state(priv->mdev, sq->sqn, &state);
 		if (err)
-			goto unlock;
+			break;
 
 		err = mlx5e_tx_reporter_build_diagnose_output(fmsg, sq->sqn,
 							      state,
 							      netif_xmit_stopped(sq->txq));
 		if (err)
-			goto unlock;
+			break;
 	}
 	err = devlink_fmsg_arr_pair_nest_end(fmsg);
 	if (err)
