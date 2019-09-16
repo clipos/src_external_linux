@@ -1013,6 +1013,8 @@ xprt_request_enqueue_receive(struct rpc_task *task)
 
 	if (!xprt_request_need_enqueue_receive(task, req))
 		return;
+
+	xprt_request_prepare(task->tk_rqstp);
 	spin_lock(&xprt->queue_lock);
 
 	/* Update the softirq receive buffer */
@@ -1377,13 +1379,6 @@ xprt_request_transmit(struct rpc_rqst *req, struct rpc_task *snd_task)
 		if (rpcauth_xmit_need_reencode(task)) {
 			status = -EBADMSG;
 			goto out_dequeue;
-		}
-		if (task->tk_ops->rpc_call_prepare_transmit) {
-			task->tk_ops->rpc_call_prepare_transmit(task,
-					task->tk_calldata);
-			status = task->tk_status;
-			if (status < 0)
-				goto out_dequeue;
 		}
 		if (RPC_SIGNALLED(task)) {
 			status = -ERESTARTSYS;
