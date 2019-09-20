@@ -1447,6 +1447,8 @@ static inline bool slab_free_freelist_hook(struct kmem_cache *s,
 							   : 0;
 			memset((char *)object + s->inuse, 0,
 			       s->size - s->inuse - rsize);
+			if (s->ctor)
+				s->ctor(object);
 			set_freepointer(s, object, p);
 			p = object;
 		} while (object != old_tail);
