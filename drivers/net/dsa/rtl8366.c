@@ -339,12 +339,10 @@ int rtl8366_vlan_prepare(struct dsa_switch *ds, int port,
 			 const struct switchdev_obj_port_vlan *vlan)
 {
 	struct realtek_smi *smi = ds->priv;
-	u16 vid;
 	int ret;
 
-	for (vid = vlan->vid_begin; vid < vlan->vid_end; vid++)
-		if (!smi->ops->is_vlan_valid(smi, vid))
-			return -EINVAL;
+	if (!smi->ops->is_vlan_valid(smi, port))
+		return -EINVAL;
 
 	dev_info(smi->dev, "prepare VLANs %04x..%04x\n",
 		 vlan->vid_begin, vlan->vid_end);
@@ -372,9 +370,8 @@ void rtl8366_vlan_add(struct dsa_switch *ds, int port,
 	u16 vid;
 	int ret;
 
-	for (vid = vlan->vid_begin; vid < vlan->vid_end; vid++)
-		if (!smi->ops->is_vlan_valid(smi, vid))
-			return;
+	if (!smi->ops->is_vlan_valid(smi, port))
+		return;
 
 	dev_info(smi->dev, "add VLAN on port %d, %s, %s\n",
 		 port,

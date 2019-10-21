@@ -564,7 +564,6 @@ static int __init top_clocks_init(struct device_node *np)
 {
 	void __iomem *reg_base;
 	int i, ret;
-	const char *name;
 
 	reg_base = of_iomap(np, 0);
 	if (!reg_base) {
@@ -574,10 +573,11 @@ static int __init top_clocks_init(struct device_node *np)
 
 	for (i = 0; i < ARRAY_SIZE(zx296718_pll_clk); i++) {
 		zx296718_pll_clk[i].reg_base += (uintptr_t)reg_base;
-		name = zx296718_pll_clk[i].hw.init->name;
 		ret = clk_hw_register(NULL, &zx296718_pll_clk[i].hw);
-		if (ret)
-			pr_warn("top clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("top clk %s init error!\n",
+				zx296718_pll_clk[i].hw.init->name);
+		}
 	}
 
 	for (i = 0; i < ARRAY_SIZE(top_ffactor_clk); i++) {
@@ -585,10 +585,11 @@ static int __init top_clocks_init(struct device_node *np)
 			top_hw_onecell_data.hws[top_ffactor_clk[i].id] =
 					&top_ffactor_clk[i].factor.hw;
 
-		name = top_ffactor_clk[i].factor.hw.init->name;
 		ret = clk_hw_register(NULL, &top_ffactor_clk[i].factor.hw);
-		if (ret)
-			pr_warn("top clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("top clk %s init error!\n",
+				top_ffactor_clk[i].factor.hw.init->name);
+		}
 	}
 
 	for (i = 0; i < ARRAY_SIZE(top_mux_clk); i++) {
@@ -597,10 +598,11 @@ static int __init top_clocks_init(struct device_node *np)
 					&top_mux_clk[i].mux.hw;
 
 		top_mux_clk[i].mux.reg += (uintptr_t)reg_base;
-		name = top_mux_clk[i].mux.hw.init->name;
 		ret = clk_hw_register(NULL, &top_mux_clk[i].mux.hw);
-		if (ret)
-			pr_warn("top clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("top clk %s init error!\n",
+				top_mux_clk[i].mux.hw.init->name);
+		}
 	}
 
 	for (i = 0; i < ARRAY_SIZE(top_gate_clk); i++) {
@@ -609,10 +611,11 @@ static int __init top_clocks_init(struct device_node *np)
 					&top_gate_clk[i].gate.hw;
 
 		top_gate_clk[i].gate.reg += (uintptr_t)reg_base;
-		name = top_gate_clk[i].gate.hw.init->name;
 		ret = clk_hw_register(NULL, &top_gate_clk[i].gate.hw);
-		if (ret)
-			pr_warn("top clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("top clk %s init error!\n",
+				top_gate_clk[i].gate.hw.init->name);
+		}
 	}
 
 	for (i = 0; i < ARRAY_SIZE(top_div_clk); i++) {
@@ -621,10 +624,11 @@ static int __init top_clocks_init(struct device_node *np)
 					&top_div_clk[i].div.hw;
 
 		top_div_clk[i].div.reg += (uintptr_t)reg_base;
-		name = top_div_clk[i].div.hw.init->name;
 		ret = clk_hw_register(NULL, &top_div_clk[i].div.hw);
-		if (ret)
-			pr_warn("top clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("top clk %s init error!\n",
+				top_div_clk[i].div.hw.init->name);
+		}
 	}
 
 	ret = of_clk_add_hw_provider(np, of_clk_hw_onecell_get,
@@ -750,7 +754,6 @@ static int __init lsp0_clocks_init(struct device_node *np)
 {
 	void __iomem *reg_base;
 	int i, ret;
-	const char *name;
 
 	reg_base = of_iomap(np, 0);
 	if (!reg_base) {
@@ -764,10 +767,11 @@ static int __init lsp0_clocks_init(struct device_node *np)
 					&lsp0_mux_clk[i].mux.hw;
 
 		lsp0_mux_clk[i].mux.reg += (uintptr_t)reg_base;
-		name = lsp0_mux_clk[i].mux.hw.init->name;
 		ret = clk_hw_register(NULL, &lsp0_mux_clk[i].mux.hw);
-		if (ret)
-			pr_warn("lsp0 clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("lsp0 clk %s init error!\n",
+				lsp0_mux_clk[i].mux.hw.init->name);
+		}
 	}
 
 	for (i = 0; i < ARRAY_SIZE(lsp0_gate_clk); i++) {
@@ -776,10 +780,11 @@ static int __init lsp0_clocks_init(struct device_node *np)
 					&lsp0_gate_clk[i].gate.hw;
 
 		lsp0_gate_clk[i].gate.reg += (uintptr_t)reg_base;
-		name = lsp0_gate_clk[i].gate.hw.init->name;
 		ret = clk_hw_register(NULL, &lsp0_gate_clk[i].gate.hw);
-		if (ret)
-			pr_warn("lsp0 clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("lsp0 clk %s init error!\n",
+				lsp0_gate_clk[i].gate.hw.init->name);
+		}
 	}
 
 	for (i = 0; i < ARRAY_SIZE(lsp0_div_clk); i++) {
@@ -788,10 +793,11 @@ static int __init lsp0_clocks_init(struct device_node *np)
 					&lsp0_div_clk[i].div.hw;
 
 		lsp0_div_clk[i].div.reg += (uintptr_t)reg_base;
-		name = lsp0_div_clk[i].div.hw.init->name;
 		ret = clk_hw_register(NULL, &lsp0_div_clk[i].div.hw);
-		if (ret)
-			pr_warn("lsp0 clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("lsp0 clk %s init error!\n",
+				lsp0_div_clk[i].div.hw.init->name);
+		}
 	}
 
 	ret = of_clk_add_hw_provider(np, of_clk_hw_onecell_get,
@@ -856,7 +862,6 @@ static int __init lsp1_clocks_init(struct device_node *np)
 {
 	void __iomem *reg_base;
 	int i, ret;
-	const char *name;
 
 	reg_base = of_iomap(np, 0);
 	if (!reg_base) {
@@ -870,10 +875,11 @@ static int __init lsp1_clocks_init(struct device_node *np)
 					&lsp0_mux_clk[i].mux.hw;
 
 		lsp1_mux_clk[i].mux.reg += (uintptr_t)reg_base;
-		name = lsp1_mux_clk[i].mux.hw.init->name;
 		ret = clk_hw_register(NULL, &lsp1_mux_clk[i].mux.hw);
-		if (ret)
-			pr_warn("lsp1 clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("lsp1 clk %s init error!\n",
+				lsp1_mux_clk[i].mux.hw.init->name);
+		}
 	}
 
 	for (i = 0; i < ARRAY_SIZE(lsp1_gate_clk); i++) {
@@ -882,10 +888,11 @@ static int __init lsp1_clocks_init(struct device_node *np)
 					&lsp1_gate_clk[i].gate.hw;
 
 		lsp1_gate_clk[i].gate.reg += (uintptr_t)reg_base;
-		name = lsp1_gate_clk[i].gate.hw.init->name;
 		ret = clk_hw_register(NULL, &lsp1_gate_clk[i].gate.hw);
-		if (ret)
-			pr_warn("lsp1 clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("lsp1 clk %s init error!\n",
+				lsp1_gate_clk[i].gate.hw.init->name);
+		}
 	}
 
 	for (i = 0; i < ARRAY_SIZE(lsp1_div_clk); i++) {
@@ -894,10 +901,11 @@ static int __init lsp1_clocks_init(struct device_node *np)
 					&lsp1_div_clk[i].div.hw;
 
 		lsp1_div_clk[i].div.reg += (uintptr_t)reg_base;
-		name = lsp1_div_clk[i].div.hw.init->name;
 		ret = clk_hw_register(NULL, &lsp1_div_clk[i].div.hw);
-		if (ret)
-			pr_warn("lsp1 clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("lsp1 clk %s init error!\n",
+				lsp1_div_clk[i].div.hw.init->name);
+		}
 	}
 
 	ret = of_clk_add_hw_provider(np, of_clk_hw_onecell_get,
@@ -971,7 +979,6 @@ static int __init audio_clocks_init(struct device_node *np)
 {
 	void __iomem *reg_base;
 	int i, ret;
-	const char *name;
 
 	reg_base = of_iomap(np, 0);
 	if (!reg_base) {
@@ -985,10 +992,11 @@ static int __init audio_clocks_init(struct device_node *np)
 					&audio_mux_clk[i].mux.hw;
 
 		audio_mux_clk[i].mux.reg += (uintptr_t)reg_base;
-		name = audio_mux_clk[i].mux.hw.init->name;
 		ret = clk_hw_register(NULL, &audio_mux_clk[i].mux.hw);
-		if (ret)
-			pr_warn("audio clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("audio clk %s init error!\n",
+				audio_mux_clk[i].mux.hw.init->name);
+		}
 	}
 
 	for (i = 0; i < ARRAY_SIZE(audio_adiv_clk); i++) {
@@ -997,10 +1005,11 @@ static int __init audio_clocks_init(struct device_node *np)
 					&audio_adiv_clk[i].hw;
 
 		audio_adiv_clk[i].reg_base += (uintptr_t)reg_base;
-		name = audio_adiv_clk[i].hw.init->name;
 		ret = clk_hw_register(NULL, &audio_adiv_clk[i].hw);
-		if (ret)
-			pr_warn("audio clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("audio clk %s init error!\n",
+				audio_adiv_clk[i].hw.init->name);
+		}
 	}
 
 	for (i = 0; i < ARRAY_SIZE(audio_div_clk); i++) {
@@ -1009,10 +1018,11 @@ static int __init audio_clocks_init(struct device_node *np)
 					&audio_div_clk[i].div.hw;
 
 		audio_div_clk[i].div.reg += (uintptr_t)reg_base;
-		name = audio_div_clk[i].div.hw.init->name;
 		ret = clk_hw_register(NULL, &audio_div_clk[i].div.hw);
-		if (ret)
-			pr_warn("audio clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("audio clk %s init error!\n",
+				audio_div_clk[i].div.hw.init->name);
+		}
 	}
 
 	for (i = 0; i < ARRAY_SIZE(audio_gate_clk); i++) {
@@ -1021,10 +1031,11 @@ static int __init audio_clocks_init(struct device_node *np)
 					&audio_gate_clk[i].gate.hw;
 
 		audio_gate_clk[i].gate.reg += (uintptr_t)reg_base;
-		name = audio_gate_clk[i].gate.hw.init->name;
 		ret = clk_hw_register(NULL, &audio_gate_clk[i].gate.hw);
-		if (ret)
-			pr_warn("audio clk %s init error!\n", name);
+		if (ret) {
+			pr_warn("audio clk %s init error!\n",
+				audio_gate_clk[i].gate.hw.init->name);
+		}
 	}
 
 	ret = of_clk_add_hw_provider(np, of_clk_hw_onecell_get,

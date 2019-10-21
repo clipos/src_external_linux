@@ -48,8 +48,12 @@ struct rmobile_pm_domain *to_rmobile_pd(struct generic_pm_domain *d)
 static int rmobile_pd_power_down(struct generic_pm_domain *genpd)
 {
 	struct rmobile_pm_domain *rmobile_pd = to_rmobile_pd(genpd);
-	unsigned int mask = BIT(rmobile_pd->bit_shift);
+	unsigned int mask;
 
+	if (rmobile_pd->bit_shift == ~0)
+		return -EBUSY;
+
+	mask = BIT(rmobile_pd->bit_shift);
 	if (rmobile_pd->suspend) {
 		int ret = rmobile_pd->suspend();
 
@@ -76,10 +80,14 @@ static int rmobile_pd_power_down(struct generic_pm_domain *genpd)
 
 static int __rmobile_pd_power_up(struct rmobile_pm_domain *rmobile_pd)
 {
-	unsigned int mask = BIT(rmobile_pd->bit_shift);
+	unsigned int mask;
 	unsigned int retry_count;
 	int ret = 0;
 
+	if (rmobile_pd->bit_shift == ~0)
+		return 0;
+
+	mask = BIT(rmobile_pd->bit_shift);
 	if (__raw_readl(rmobile_pd->base + PSTR) & mask)
 		return ret;
 
@@ -114,15 +122,11 @@ static void rmobile_init_pm_domain(struct rmobile_pm_domain *rmobile_pd)
 	struct dev_power_governor *gov = rmobile_pd->gov;
 
 	genpd->flags |= GENPD_FLAG_PM_CLK | GENPD_FLAG_ACTIVE_WAKEUP;
-	genpd->attach_dev = cpg_mstp_attach_dev;
-	genpd->detach_dev = cpg_mstp_detach_dev;
-
-	if (!(genpd->flags & GENPD_FLAG_ALWAYS_ON)) {
-		genpd->power_off = rmobile_pd_power_down;
-		genpd->power_on = rmobile_pd_power_up;
-		__rmobile_pd_power_up(rmobile_pd);
-	}
-
+	genpd->power_off		= rmobile_pd_power_down;
+	genpd->power_on			= rmobile_pd_power_up;
+	genpd->attach_dev		= cpg_mstp_attach_dev;
+	genpd->detach_dev		= cpg_mstp_detach_dev;
+	__rmobile_pd_power_up(rmobile_pd);
 	pm_genpd_init(genpd, gov ? : &simple_qos_governor, false);
 }
 
@@ -266,11 +270,6 @@ static void __init rmobile_setup_pm_domain(struct device_node *np,
 		break;
 
 	case PD_NORMAL:
-		if (pd->bit_shift == ~0) {
-			/* Top-level always-on domain */
-			pr_debug("PM domain %s is always-on domain\n", name);
-			pd->genpd.flags |= GENPD_FLAG_ALWAYS_ON;
-		}
 		break;
 	}
 

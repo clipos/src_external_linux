@@ -41,7 +41,6 @@ struct cros_ec_rpmsg {
 	struct rpmsg_device *rpdev;
 	struct completion xfer_ack;
 	struct work_struct host_event_work;
-	struct rpmsg_endpoint *ept;
 };
 
 /**
@@ -73,6 +72,7 @@ static int cros_ec_pkt_xfer_rpmsg(struct cros_ec_device *ec_dev,
 				  struct cros_ec_command *ec_msg)
 {
 	struct cros_ec_rpmsg *ec_rpmsg = ec_dev->priv;
+	struct rpmsg_device *rpdev = ec_rpmsg->rpdev;
 	struct ec_host_response *response;
 	unsigned long timeout;
 	int len;
@@ -85,7 +85,7 @@ static int cros_ec_pkt_xfer_rpmsg(struct cros_ec_device *ec_dev,
 	dev_dbg(ec_dev->dev, "prepared, len=%d\n", len);
 
 	reinit_completion(&ec_rpmsg->xfer_ack);
-	ret = rpmsg_send(ec_rpmsg->ept, ec_dev->dout, len);
+	ret = rpmsg_send(rpdev->ept, ec_dev->dout, len);
 	if (ret) {
 		dev_err(ec_dev->dev, "rpmsg send failed\n");
 		return ret;
@@ -196,24 +196,11 @@ static int cros_ec_rpmsg_callback(struct rpmsg_device *rpdev, void *data,
 	return 0;
 }
 
-static struct rpmsg_endpoint *
-cros_ec_rpmsg_create_ept(struct rpmsg_device *rpdev)
-{
-	struct rpmsg_channel_info chinfo = {};
-
-	strscpy(chinfo.name, rpdev->id.name, RPMSG_NAME_SIZE);
-	chinfo.src = rpdev->src;
-	chinfo.dst = RPMSG_ADDR_ANY;
-
-	return rpmsg_create_ept(rpdev, cros_ec_rpmsg_callback, NULL, chinfo);
-}
-
 static int cros_ec_rpmsg_probe(struct rpmsg_device *rpdev)
 {
 	struct device *dev = &rpdev->dev;
 	struct cros_ec_rpmsg *ec_rpmsg;
 	struct cros_ec_device *ec_dev;
-	int ret;
 
 	ec_dev = devm_kzalloc(dev, sizeof(*ec_dev), GFP_KERNEL);
 	if (!ec_dev)
@@ -238,18 +225,7 @@ static int cros_ec_rpmsg_probe(struct rpmsg_device *rpdev)
 	INIT_WORK(&ec_rpmsg->host_event_work,
 		  cros_ec_rpmsg_host_event_function);
 
-	ec_rpmsg->ept = cros_ec_rpmsg_create_ept(rpdev);
-	if (!ec_rpmsg->ept)
-		return -ENOMEM;
-
-	ret = cros_ec_register(ec_dev);
-	if (ret < 0) {
-		rpmsg_destroy_ept(ec_rpmsg->ept);
-		cancel_work_sync(&ec_rpmsg->host_event_work);
-		return ret;
-	}
-
-	return 0;
+	return cros_ec_register(ec_dev);
 }
 
 static void cros_ec_rpmsg_remove(struct rpmsg_device *rpdev)
@@ -257,7 +233,6 @@ static void cros_ec_rpmsg_remove(struct rpmsg_device *rpdev)
 	struct cros_ec_device *ec_dev = dev_get_drvdata(&rpdev->dev);
 	struct cros_ec_rpmsg *ec_rpmsg = ec_dev->priv;
 
-	rpmsg_destroy_ept(ec_rpmsg->ept);
 	cancel_work_sync(&ec_rpmsg->host_event_work);
 }
 
@@ -274,6 +249,7 @@ static struct rpmsg_driver cros_ec_driver_rpmsg = {
 	},
 	.probe		= cros_ec_rpmsg_probe,
 	.remove		= cros_ec_rpmsg_remove,
+	.callback	= cros_ec_rpmsg_callback,
 };
 
 module_rpmsg_driver(cros_ec_driver_rpmsg);

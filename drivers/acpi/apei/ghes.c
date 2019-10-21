@@ -153,7 +153,6 @@ static void ghes_unmap(void __iomem *vaddr, enum fixed_addresses fixmap_idx)
 int ghes_estatus_pool_init(int num_ghes)
 {
 	unsigned long addr, len;
-	int rc;
 
 	ghes_estatus_pool = gen_pool_create(GHES_ESTATUS_POOL_MIN_ALLOC_ORDER, -1);
 	if (!ghes_estatus_pool)
@@ -165,7 +164,7 @@ int ghes_estatus_pool_init(int num_ghes)
 	ghes_estatus_pool_size_request = PAGE_ALIGN(len);
 	addr = (unsigned long)vmalloc(PAGE_ALIGN(len));
 	if (!addr)
-		goto err_pool_alloc;
+		return -ENOMEM;
 
 	/*
 	 * New allocation must be visible in all pgd before it can be found by
@@ -173,19 +172,7 @@ int ghes_estatus_pool_init(int num_ghes)
 	 */
 	vmalloc_sync_all();
 
-	rc = gen_pool_add(ghes_estatus_pool, addr, PAGE_ALIGN(len), -1);
-	if (rc)
-		goto err_pool_add;
-
-	return 0;
-
-err_pool_add:
-	vfree((void *)addr);
-
-err_pool_alloc:
-	gen_pool_destroy(ghes_estatus_pool);
-
-	return -ENOMEM;
+	return gen_pool_add(ghes_estatus_pool, addr, PAGE_ALIGN(len), -1);
 }
 
 static int map_gen_v2(struct ghes *ghes)
@@ -358,7 +345,7 @@ static int __ghes_peek_estatus(struct ghes *ghes,
 		return -ENOENT;
 	}
 
-	return __ghes_check_estatus(ghes, estatus);
+	return 0;
 }
 
 static int __ghes_read_estatus(struct acpi_hest_generic_status *estatus,

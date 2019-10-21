@@ -1614,7 +1614,8 @@ static void sync_eld_via_acomp(struct hda_codec *codec,
 	if (jack == NULL)
 		goto unlock;
 	snd_jack_report(jack,
-			eld->monitor_present ? SND_JACK_AVOUT : 0);
+			(eld->monitor_present && eld->eld_valid) ?
+				SND_JACK_AVOUT : 0);
  unlock:
 	mutex_unlock(&per_pin->lock);
 }
@@ -2611,8 +2612,6 @@ static void i915_pin_cvt_fixup(struct hda_codec *codec,
 /* precondition and allocation for Intel codecs */
 static int alloc_intel_hdmi(struct hda_codec *codec)
 {
-	int err;
-
 	/* requires i915 binding */
 	if (!codec->bus->core.audio_component) {
 		codec_info(codec, "No i915 binding for Intel HDMI/DP codec\n");
@@ -2621,12 +2620,7 @@ static int alloc_intel_hdmi(struct hda_codec *codec)
 		return -ENODEV;
 	}
 
-	err = alloc_generic_hdmi(codec);
-	if (err < 0)
-		return err;
-	/* no need to handle unsol events */
-	codec->patch_ops.unsol_event = NULL;
-	return 0;
+	return alloc_generic_hdmi(codec);
 }
 
 /* parse and post-process for Intel codecs */

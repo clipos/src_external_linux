@@ -27,7 +27,8 @@
  * deactivate the pages and clear PG_Referenced.
  */
 
-int generic_fadvise(struct file *file, loff_t offset, loff_t len, int advice)
+static int generic_fadvise(struct file *file, loff_t offset, loff_t len,
+			   int advice)
 {
 	struct inode *inode;
 	struct address_space *mapping;
@@ -177,7 +178,6 @@ int generic_fadvise(struct file *file, loff_t offset, loff_t len, int advice)
 	}
 	return 0;
 }
-EXPORT_SYMBOL(generic_fadvise);
 
 int vfs_fadvise(struct file *file, loff_t offset, loff_t len, int advice)
 {

@@ -46,7 +46,6 @@ extern unsigned long __xchg_called_with_bad_pointer(void)
 	__typeof(*(m)) __ret;						\
 									\
 	if (kernel_uses_llsc) {						\
-		loongson_llsc_mb();					\
 		__asm__ __volatile__(					\
 		"	.set	push				\n"	\
 		"	.set	noat				\n"	\
@@ -61,7 +60,7 @@ extern unsigned long __xchg_called_with_bad_pointer(void)
 		"	.set	pop				\n"	\
 		: "=&r" (__ret), "=" GCC_OFF_SMALL_ASM() (*m)		\
 		: GCC_OFF_SMALL_ASM() (*m), "Jr" (val)			\
-		: __LLSC_CLOBBER);					\
+		: "memory");						\
 	} else {							\
 		unsigned long __flags;					\
 									\
@@ -118,7 +117,6 @@ static inline unsigned long __xchg(volatile void *ptr, unsigned long x,
 	__typeof(*(m)) __ret;						\
 									\
 	if (kernel_uses_llsc) {						\
-		loongson_llsc_mb();					\
 		__asm__ __volatile__(					\
 		"	.set	push				\n"	\
 		"	.set	noat				\n"	\
@@ -134,9 +132,8 @@ static inline unsigned long __xchg(volatile void *ptr, unsigned long x,
 		"	.set	pop				\n"	\
 		"2:						\n"	\
 		: "=&r" (__ret), "=" GCC_OFF_SMALL_ASM() (*m)		\
-		: GCC_OFF_SMALL_ASM() (*m), "Jr" (old), "Jr" (new)	\
-		: __LLSC_CLOBBER);					\
-		loongson_llsc_mb();					\
+		: GCC_OFF_SMALL_ASM() (*m), "Jr" (old), "Jr" (new)		\
+		: "memory");						\
 	} else {							\
 		unsigned long __flags;					\
 									\
@@ -232,7 +229,6 @@ static inline unsigned long __cmpxchg64(volatile void *ptr,
 	 */
 	local_irq_save(flags);
 
-	loongson_llsc_mb();
 	asm volatile(
 	"	.set	push				\n"
 	"	.set	" MIPS_ISA_ARCH_LEVEL "		\n"
@@ -278,7 +274,6 @@ static inline unsigned long __cmpxchg64(volatile void *ptr,
 	  "r" (old),
 	  "r" (new)
 	: "memory");
-	loongson_llsc_mb();
 
 	local_irq_restore(flags);
 	return ret;

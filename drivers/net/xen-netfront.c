@@ -887,9 +887,9 @@ static int xennet_set_skb_gso(struct sk_buff *skb,
 	return 0;
 }
 
-static int xennet_fill_frags(struct netfront_queue *queue,
-			     struct sk_buff *skb,
-			     struct sk_buff_head *list)
+static RING_IDX xennet_fill_frags(struct netfront_queue *queue,
+				  struct sk_buff *skb,
+				  struct sk_buff_head *list)
 {
 	RING_IDX cons = queue->rx.rsp_cons;
 	struct sk_buff *nskb;
@@ -906,9 +906,9 @@ static int xennet_fill_frags(struct netfront_queue *queue,
 			__pskb_pull_tail(skb, pull_to - skb_headlen(skb));
 		}
 		if (unlikely(skb_shinfo(skb)->nr_frags >= MAX_SKB_FRAGS)) {
-			queue->rx.rsp_cons = ++cons + skb_queue_len(list);
+			queue->rx.rsp_cons = ++cons;
 			kfree_skb(nskb);
-			return -ENOENT;
+			return ~0U;
 		}
 
 		skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags,
@@ -919,9 +919,7 @@ static int xennet_fill_frags(struct netfront_queue *queue,
 		kfree_skb(nskb);
 	}
 
-	queue->rx.rsp_cons = cons;
-
-	return 0;
+	return cons;
 }
 
 static int checksum_setup(struct net_device *dev, struct sk_buff *skb)
@@ -1047,7 +1045,8 @@ err:
 		skb->data_len = rx->status;
 		skb->len += rx->status;
 
-		if (unlikely(xennet_fill_frags(queue, skb, &tmpq)))
+		i = xennet_fill_frags(queue, skb, &tmpq);
+		if (unlikely(i == ~0U))
 			goto err;
 
 		if (rx->flags & XEN_NETRXF_csum_blank)
@@ -1057,7 +1056,7 @@ err:
 
 		__skb_queue_tail(&rxq, skb);
 
-		i = ++queue->rx.rsp_cons;
+		queue->rx.rsp_cons = ++i;
 		work_done++;
 	}
 

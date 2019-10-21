@@ -364,6 +364,10 @@ static int avic;
 module_param(avic, int, S_IRUGO);
 #endif
 
+/* enable/disable Next RIP Save */
+static int nrips = true;
+module_param(nrips, int, 0444);
+
 /* enable/disable Virtual VMLOAD VMSAVE */
 static int vls = true;
 module_param(vls, int, 0444);
@@ -770,7 +774,7 @@ static void skip_emulated_instruction(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
 
-	if (svm->vmcb->control.next_rip != 0) {
+	if (nrips && svm->vmcb->control.next_rip != 0) {
 		WARN_ON_ONCE(!static_cpu_has(X86_FEATURE_NRIPS));
 		svm->next_rip = svm->vmcb->control.next_rip;
 	}
@@ -807,7 +811,7 @@ static void svm_queue_exception(struct kvm_vcpu *vcpu)
 
 	kvm_deliver_exception_payload(&svm->vcpu);
 
-	if (nr == BP_VECTOR && !static_cpu_has(X86_FEATURE_NRIPS)) {
+	if (nr == BP_VECTOR && !nrips) {
 		unsigned long rip, old_rip = kvm_rip_read(&svm->vcpu);
 
 		/*
@@ -1364,6 +1368,11 @@ static __init int svm_hardware_setup(void)
 	} else
 		kvm_disable_tdp();
 
+	if (nrips) {
+		if (!boot_cpu_has(X86_FEATURE_NRIPS))
+			nrips = false;
+	}
+
 	if (avic) {
 		if (!npt_enabled ||
 		    !boot_cpu_has(X86_FEATURE_AVIC) ||
@@ -1705,7 +1714,6 @@ static int avic_init_backing_page(struct kvm_vcpu *vcpu)
 	if (!entry)
 		return -EINVAL;
 
-	new_entry = READ_ONCE(*entry);
 	new_entry = __sme_set((page_to_phys(svm->avic_backing_page) &
 			      AVIC_PHYSICAL_ID_ENTRY_BACKING_PAGE_MASK) |
 			      AVIC_PHYSICAL_ID_ENTRY_VALID_MASK);
@@ -2134,12 +2142,20 @@ static struct kvm_vcpu *svm_create_vcpu(struct kvm *kvm, unsigned int id)
 		goto out;
 	}
 
+	svm->vcpu.arch.user_fpu = kmem_cache_zalloc(x86_fpu_cache,
+						     GFP_KERNEL_ACCOUNT);
+	if (!svm->vcpu.arch.user_fpu) {
+		printk(KERN_ERR "kvm: failed to allocate kvm userspace's fpu\n");
+		err = -ENOMEM;
+		goto free_partial_svm;
+	}
+
 	svm->vcpu.arch.guest_fpu = kmem_cache_zalloc(x86_fpu_cache,
 						     GFP_KERNEL_ACCOUNT);
 	if (!svm->vcpu.arch.guest_fpu) {
 		printk(KERN_ERR "kvm: failed to allocate vcpu's fpu\n");
 		err = -ENOMEM;
-		goto free_partial_svm;
+		goto free_user_fpu;
 	}
 
 	err = kvm_vcpu_init(&svm->vcpu, kvm, id);
@@ -2202,6 +2218,8 @@ uninit:
 	kvm_vcpu_uninit(&svm->vcpu);
 free_svm:
 	kmem_cache_free(x86_fpu_cache, svm->vcpu.arch.guest_fpu);
+free_user_fpu:
+	kmem_cache_free(x86_fpu_cache, svm->vcpu.arch.user_fpu);
 free_partial_svm:
 	kmem_cache_free(kvm_vcpu_cache, svm);
 out:
@@ -2232,6 +2250,7 @@ static void svm_free_vcpu(struct kvm_vcpu *vcpu)
 	__free_page(virt_to_page(svm->nested.hsave));
 	__free_pages(virt_to_page(svm->nested.msrpm), MSRPM_ALLOC_ORDER);
 	kvm_vcpu_uninit(vcpu);
+	kmem_cache_free(x86_fpu_cache, svm->vcpu.arch.user_fpu);
 	kmem_cache_free(x86_fpu_cache, svm->vcpu.arch.guest_fpu);
 	kmem_cache_free(kvm_vcpu_cache, svm);
 }
@@ -3935,7 +3954,7 @@ static int rdpmc_interception(struct vcpu_svm *svm)
 {
 	int err;
 
-	if (!static_cpu_has(X86_FEATURE_NRIPS))
+	if (!nrips)
 		return emulate_on_interception(svm);
 
 	err = kvm_rdpmc(&svm->vcpu);
@@ -5160,10 +5179,13 @@ static void svm_deliver_avic_intr(struct kvm_vcpu *vcpu, int vec)
 	kvm_lapic_set_irr(vec, vcpu->arch.apic);
 	smp_mb__after_atomic();
 
-	if (avic_vcpu_is_running(vcpu))
-		wrmsrl(SVM_AVIC_DOORBELL,
-		       kvm_cpu_get_apicid(vcpu->cpu));
-	else
+	if (avic_vcpu_is_running(vcpu)) {
+		int cpuid = vcpu->cpu;
+
+		if (cpuid != get_cpu())
+			wrmsrl(SVM_AVIC_DOORBELL, kvm_cpu_get_apicid(cpuid));
+		put_cpu();
+	} else
 		kvm_vcpu_wake_up(vcpu);
 }
 
@@ -5252,8 +5274,7 @@ get_pi_vcpu_info(struct kvm *kvm, struct kvm_kernel_irq_routing_entry *e,
 
 	kvm_set_msi_irq(kvm, e, &irq);
 
-	if (!kvm_intr_is_single_vcpu(kvm, &irq, &vcpu) ||
-	    !kvm_irq_is_postable(&irq)) {
+	if (!kvm_intr_is_single_vcpu(kvm, &irq, &vcpu)) {
 		pr_debug("SVM: %s: use legacy intr remap mode for irq %u\n",
 			 __func__, irq.vector);
 		return -1;
@@ -5307,7 +5328,6 @@ static int svm_update_pi_irte(struct kvm *kvm, unsigned int host_irq,
 		 * 1. When cannot target interrupt to a specific vcpu.
 		 * 2. Unsetting posted interrupt.
 		 * 3. APIC virtialization is disabled for the vcpu.
-		 * 4. IRQ has incompatible delivery mode (SMI, INIT, etc)
 		 */
 		if (!get_pi_vcpu_info(kvm, e, &vcpu_info, &svm) && set &&
 		    kvm_vcpu_apicv_active(&svm->vcpu)) {
@@ -5647,6 +5667,10 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 	clgi();
 	kvm_load_guest_xcr0(vcpu);
 
+	if (lapic_in_kernel(vcpu) &&
+		vcpu->arch.apic->lapic_timer.timer_advance_ns)
+		kvm_wait_lapic_expire(vcpu);
+
 	/*
 	 * If this vCPU has touched SPEC_CTRL, restore the guest's value if
 	 * it's non-zero. Since vmentry is serialising on affected CPUs, there
@@ -5868,9 +5892,9 @@ svm_patch_hypercall(struct kvm_vcpu *vcpu, unsigned char *hypercall)
 	hypercall[2] = 0xd9;
 }
 
-static void svm_check_processor_compat(void *rtn)
+static int __init svm_check_processor_compat(void)
 {
-	*(int *)rtn = 0;
+	return 0;
 }
 
 static bool svm_cpu_has_accelerated_tpr(void)
@@ -5882,6 +5906,7 @@ static bool svm_has_emulated_msr(int index)
 {
 	switch (index) {
 	case MSR_IA32_MCG_EXT_CTL:
+	case MSR_IA32_VMX_BASIC ... MSR_IA32_VMX_VMFUNC:
 		return false;
 	default:
 		break;
@@ -6169,15 +6194,9 @@ out:
 	return ret;
 }
 
-static void svm_handle_external_intr(struct kvm_vcpu *vcpu)
+static void svm_handle_exit_irqoff(struct kvm_vcpu *vcpu)
 {
-	local_irq_enable();
-	/*
-	 * We must have an instruction with interrupts enabled, so
-	 * the timer interrupt isn't delayed by the interrupt shadow.
-	 */
-	asm("nop");
-	local_irq_disable();
+
 }
 
 static void svm_sched_in(struct kvm_vcpu *vcpu, int cpu)
@@ -7285,7 +7304,7 @@ static struct kvm_x86_ops svm_x86_ops __ro_after_init = {
 	.set_tdp_cr3 = set_tdp_cr3,
 
 	.check_intercept = svm_check_intercept,
-	.handle_external_intr = svm_handle_external_intr,
+	.handle_exit_irqoff = svm_handle_exit_irqoff,
 
 	.request_immediate_exit = __kvm_request_immediate_exit,
 

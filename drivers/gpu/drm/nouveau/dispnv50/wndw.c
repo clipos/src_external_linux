@@ -320,9 +320,7 @@ nv50_wndw_atomic_check_lut(struct nv50_wndw *wndw,
 		asyh->wndw.olut &= ~BIT(wndw->id);
 	}
 
-	if (!ilut && wndw->func->ilut_identity &&
-	    asyw->state.fb->format->format != DRM_FORMAT_XBGR16161616F &&
-	    asyw->state.fb->format->format != DRM_FORMAT_ABGR16161616F) {
+	if (!ilut && wndw->func->ilut_identity) {
 		static struct drm_property_blob dummy = {};
 		ilut = &dummy;
 	}

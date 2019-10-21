@@ -19,10 +19,9 @@ ifeq ($(CONFIG_PM_DEBUG),y)
 CFLAGS_pm.o += -DDEBUG
 endif
 
-$(obj)/pm_data-offsets.h: $(obj)/pm_data-offsets.s FORCE
+include/generated/at91_pm_data-offsets.h: arch/arm/mach-at91/pm_data-offsets.s FORCE
 	$(call filechk,offsets,__PM_DATA_OFFSETS_H__)
 
-$(obj)/pm_suspend.o: $(obj)/pm_data-offsets.h
+arch/arm/mach-at91/pm_suspend.o: include/generated/at91_pm_data-offsets.h
 
 targets += pm_data-offsets.s
-clean-files += pm_data-offsets.h

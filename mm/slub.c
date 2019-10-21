@@ -125,14 +125,10 @@ static inline int kmem_cache_debug(struct kmem_cache *s)
 #endif
 }
 
-static inline bool has_sanitize(struct kmem_cache *s)
-{
-	return IS_ENABLED(CONFIG_SLAB_SANITIZE) && !(s->flags & (SLAB_TYPESAFE_BY_RCU | SLAB_POISON));
-}
-
 static inline bool has_sanitize_verify(struct kmem_cache *s)
 {
-	return IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) && has_sanitize(s);
+	return IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) &&
+	       slab_want_init_on_free(s);
 }
 
 void *fixup_red_left(struct kmem_cache *s, void *p)
@@ -1327,6 +1323,10 @@ check_slabs:
 	if (*str == ',')
 		slub_debug_slabs = str + 1;
 out:
+	if ((static_branch_unlikely(&init_on_alloc) ||
+	     static_branch_unlikely(&init_on_free)) &&
+	    (slub_debug & SLAB_POISON))
+		pr_info("mem auto-init: SLAB_POISON will take precedence over init_on_alloc/init_on_free\n");
 	return 1;
 }
 
@@ -1361,9 +1361,7 @@ slab_flags_t kmem_cache_flags(unsigned int object_size,
 		char *end, *glob;
 		size_t cmplen;
 
-		end = strchr(iter, ',');
-		if (!end)
-			end = iter + strlen(iter);
+		end = strchrnul(iter, ',');
 
 		glob = strnchr(iter, end - iter, '*');
 		if (glob)
@@ -1472,6 +1470,40 @@ static __always_inline bool slab_free_hook(struct kmem_cache *s, void *x)
 static inline bool slab_free_freelist_hook(struct kmem_cache *s,
 					   void **head, void **tail)
 {
+
+	void *object;
+	void *next = *head;
+	void *old_tail = *tail ? *tail : *head;
+	int rsize;
+
+	if (IS_ENABLED(CONFIG_SLAB_CANARY) || slab_want_init_on_free(s)) {
+		void *p = NULL;
+
+		do {
+			object = next;
+			next = get_freepointer(s, object);
+			check_canary(s, object, s->random_active);
+
+			if (slab_want_init_on_free(s)) {
+				/*
+				 * Clear the object and the metadata, but don't touch
+				 * the redzone.
+				 */
+				memset(object, 0, s->object_size);
+				rsize = (s->flags & SLAB_RED_ZONE) ? s->red_left_pad
+								   : 0;
+				memset((char *)object + s->inuse, 0,
+				       s->size - s->inuse - rsize);
+				if (!IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) && s->ctor)
+					s->ctor(object);
+				set_freepointer(s, object, p);
+				p = object;
+			}
+
+			set_canary(s, object, s->random_inactive);
+		} while (object != old_tail);
+	}
+
 /*
  * Compiler cannot detect this function can be removed if slab_free_hook()
  * evaluates to nothing.  Thus, catch all relevant config debug options here.
@@ -1481,9 +1513,7 @@ static inline bool slab_free_freelist_hook(struct kmem_cache *s,
 	defined(CONFIG_DEBUG_OBJECTS_FREE) ||	\
 	defined(CONFIG_KASAN)
 
-	void *object;
-	void *next = *head;
-	void *old_tail = *tail ? *tail : *head;
+	next = *head;
 
 	/* Head and tail of the reconstructed freelist */
 	*head = NULL;
@@ -1539,7 +1569,7 @@ static inline struct page *alloc_slab_page(struct kmem_cache *s,
 	else
 		page = __alloc_pages_node(node, flags, order);
 
-	if (page && memcg_charge_slab(page, flags, order, s)) {
+	if (page && charge_slab_page(page, flags, order, s)) {
 		__free_pages(page, order);
 		page = NULL;
 	}
@@ -1732,11 +1762,6 @@ out:
 	if (!page)
 		return NULL;
 
-	mod_lruvec_page_state(page,
-		(s->flags & SLAB_RECLAIM_ACCOUNT) ?
-		NR_SLAB_RECLAIMABLE : NR_SLAB_UNRECLAIMABLE,
-		1 << oo_order(oo));
-
 	inc_slabs_node(s, page_to_nid(page), page->objects);
 
 	return page;
@@ -1770,18 +1795,13 @@ static void __free_slab(struct kmem_cache *s, struct page *page)
 			check_object(s, page, p, SLUB_RED_INACTIVE);
 	}
 
-	mod_lruvec_page_state(page,
-		(s->flags & SLAB_RECLAIM_ACCOUNT) ?
-		NR_SLAB_RECLAIMABLE : NR_SLAB_UNRECLAIMABLE,
-		-pages);
-
 	__ClearPageSlabPfmemalloc(page);
 	__ClearPageSlab(page);
 
 	page->mapping = NULL;
 	if (current->reclaim_state)
 		current->reclaim_state->reclaimed_slab += pages;
-	memcg_uncharge_slab(page, order, s);
+	uncharge_slab_page(page, order, s);
 	__free_pages(page, order);
 }
 
@@ -2790,15 +2810,23 @@ redo:
 		prefetch_freepointer(s, next_object);
 		stat(s, ALLOC_FASTPATH);
 	}
+	/*
+	 * If the object has been wiped upon free, make sure it's fully
+	 * initialized by zeroing out freelist pointer.
+	 */
+	if (unlikely(slab_want_init_on_free(s)) && object)
+		memset(object + s->offset, 0, sizeof(void *));
 
 	if (has_sanitize_verify(s) && object) {
-		size_t offset = s->offset ? 0 : sizeof(void *);
-		BUG_ON(memchr_inv(object + offset, 0, s->object_size - offset));
+		/* KASAN hasn't unpoisoned the object yet (this is done in the
+		 * post-alloc hook), so let's do it temporarily.
+		 */
+		kasan_unpoison_object_data(s, object);
+		BUG_ON(memchr_inv(object, 0, s->object_size));
 		if (s->ctor)
 			s->ctor(object);
-		if (unlikely(gfpflags & __GFP_ZERO) && offset)
-			memset(object, 0, sizeof(void *));
-	} else if (unlikely(gfpflags & __GFP_ZERO) && object)
+		kasan_poison_object_data(s, object);
+	} else if (unlikely(slab_want_init_on_alloc(gfpflags, s)) && object)
 		memset(object, 0, s->object_size);
 
 	if (object) {
@@ -3011,27 +3039,6 @@ static __always_inline void do_slab_free(struct kmem_cache *s,
 	void *tail_obj = tail ? : head;
 	struct kmem_cache_cpu *c;
 	unsigned long tid;
-	bool sanitize = has_sanitize(s);
-
-	if (IS_ENABLED(CONFIG_SLAB_CANARY) || sanitize) {
-		__maybe_unused int offset = s->offset ? 0 : sizeof(void *);
-		void *x = head;
-
-		while (1) {
-			check_canary(s, x, s->random_active);
-			set_canary(s, x, s->random_inactive);
-
-			if (sanitize) {
-				memset(x + offset, 0, s->object_size - offset);
-				if (!IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) && s->ctor)
-					s->ctor(x);
-			}
-			if (x == tail_obj)
-				break;
-			x = get_freepointer(s, x);
-		}
-	}
-
 redo:
 	/*
 	 * Determine the currently cpus per cpu slab.
@@ -3246,17 +3253,22 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
 
 	/* Clear memory outside IRQ disabled fastpath loop */
 	if (has_sanitize_verify(s)) {
+		size_t offset = s->offset ? 0 : sizeof(void *);
 		int j;
 
 		for (j = 0; j < i; j++) {
-			size_t offset = s->offset ? 0 : sizeof(void *);
+			/* KASAN hasn't unpoisoned the object yet (this is done
+			 * in the post-alloc hook), so let's do it temporarily.
+			 */
+			kasan_unpoison_object_data(s, p[j]);
 			BUG_ON(memchr_inv(p[j] + offset, 0, s->object_size - offset));
 			if (s->ctor)
 				s->ctor(p[j]);
+			kasan_poison_object_data(s, p[j]);
 			if (unlikely(flags & __GFP_ZERO) && offset)
 				memset(p[j], 0, sizeof(void *));
 		}
-	} else if (unlikely(flags & __GFP_ZERO)) {
+	} else if (unlikely(slab_want_init_on_alloc(flags, s))) {
 		int j;
 
 		for (j = 0; j < i; j++)
@@ -3758,10 +3770,6 @@ static int kmem_cache_open(struct kmem_cache *s, slab_flags_t flags)
 
 	free_kmem_cache_nodes(s);
 error:
-	if (flags & SLAB_PANIC)
-		panic("Cannot create slab %s size=%u realsize=%u order=%u offset=%u flags=%lx\n",
-		      s->name, s->size, s->size,
-		      oo_order(s->oo), s->offset, (unsigned long)flags);
 	return -EINVAL;
 }
 
@@ -4009,7 +4017,7 @@ void __check_heap_object(const void *ptr, unsigned long n, struct page *page,
 }
 #endif /* CONFIG_HARDENED_USERCOPY */
 
-static size_t __ksize(const void *object)
+size_t __ksize(const void *object)
 {
 	struct page *page;
 
@@ -4029,17 +4037,7 @@ static size_t __ksize(const void *object)
 
 	return slab_ksize(page->slab_cache);
 }
-
-size_t ksize(const void *object)
-{
-	size_t size = __ksize(object);
-	/* We assume that ksize callers could use whole allocated area,
-	 * so we need to unpoison this area.
-	 */
-	kasan_unpoison_shadow(object, size);
-	return size;
-}
-EXPORT_SYMBOL(ksize);
+EXPORT_SYMBOL(__ksize);
 
 void kfree(const void *x)
 {
@@ -4136,7 +4134,7 @@ int __kmem_cache_shrink(struct kmem_cache *s)
 }
 
 #ifdef CONFIG_MEMCG
-static void kmemcg_cache_deact_after_rcu(struct kmem_cache *s)
+void __kmemcg_cache_deactivate_after_rcu(struct kmem_cache *s)
 {
 	/*
 	 * Called with all the locks held after a sched RCU grace period.
@@ -4162,12 +4160,6 @@ void __kmemcg_cache_deactivate(struct kmem_cache *s)
 	 */
 	slub_set_cpu_partial(s, 0);
 	s->min_partial = 0;
-
-	/*
-	 * s->cpu_partial is checked locklessly (see put_cpu_partial), so
-	 * we have to make sure the change is visible before shrinking.
-	 */
-	slab_deactivate_memcg_cache_rcu_sched(s, kmemcg_cache_deact_after_rcu);
 }
 #endif	/* CONFIG_MEMCG */
 
@@ -4327,7 +4319,7 @@ static struct kmem_cache * __init bootstrap(struct kmem_cache *static_cache)
 	}
 	slab_init_memcg_params(s);
 	list_add(&s->list, &slab_caches);
-	memcg_link_cache(s);
+	memcg_link_cache(s, NULL);
 	return s;
 }
 

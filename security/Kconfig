@@ -88,7 +88,7 @@ config PAGE_TABLE_ISOLATION
 	  ensuring that the majority of kernel addresses are not mapped
 	  into userspace.
 
-	  See Documentation/x86/pti.txt for more details.
+	  See Documentation/x86/pti.rst for more details.
 
 config SECURITY_INFINIBAND
 	bool "Infiniband Security Hooks"
@@ -146,7 +146,7 @@ config INTEL_TXT
 	  See <http://www.intel.com/technology/security/> for more information
 	  about Intel(R) TXT.
 	  See <http://tboot.sourceforge.net> for more information about tboot.
-	  See Documentation/intel_txt.txt for a description of how to enable
+	  See Documentation/x86/intel_txt.rst for a description of how to enable
 	  Intel TXT support in a kernel boot.
 
 	  If you are unsure as to whether this is required, answer N.
@@ -230,21 +230,6 @@ config FORTIFY_SOURCE_STRICT_STRING
 	  for common C string functions rather than only between objects.
 
 	  This is not yet intended for production use, only bug finding.
-
-config PAGE_SANITIZE
-	bool "Sanitize pages"
-	default y
-	help
-	  Zero fill page allocations on free, reducing the lifetime of
-	  sensitive data and helping to mitigate use-after-free bugs.
-
-config PAGE_SANITIZE_VERIFY
-	bool "Verify sanitized pages"
-	depends on PAGE_SANITIZE
-	default y
-	help
-	  Verify that newly allocated pages are zeroed to detect
-	  write-after-free bugs.
 
 config STATIC_USERMODEHELPER
 	bool "Force all usermode helper calls through a single binary"

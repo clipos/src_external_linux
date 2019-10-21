@@ -871,17 +871,15 @@ static int rtas_cpu_state_change_mask(enum rtas_cpu_state state,
 		return 0;
 
 	for_each_cpu(cpu, cpus) {
-		struct device *dev = get_cpu_device(cpu);
-
 		switch (state) {
 		case DOWN:
-			cpuret = device_offline(dev);
+			cpuret = cpu_down(cpu);
 			break;
 		case UP:
-			cpuret = device_online(dev);
+			cpuret = cpu_up(cpu);
 			break;
 		}
-		if (cpuret < 0) {
+		if (cpuret) {
 			pr_debug("%s: cpu_%s for cpu#%d returned %d.\n",
 					__func__,
 					((state == UP) ? "up" : "down"),
@@ -970,8 +968,6 @@ int rtas_ibm_suspend_me(u64 handle)
 	data.token = rtas_token("ibm,suspend-me");
 	data.complete = &done;
 
-	lock_device_hotplug();
-
 	/* All present CPUs must be online */
 	cpumask_andnot(offline_mask, cpu_present_mask, cpu_online_mask);
 	cpuret = rtas_online_cpus_mask(offline_mask);
@@ -993,8 +989,7 @@ int rtas_ibm_suspend_me(u64 handle)
 	/* Call function on all CPUs.  One of us will make the
 	 * rtas call
 	 */
-	if (on_each_cpu(rtas_percpu_suspend_me, &data, 0))
-		atomic_set(&data.error, -EINVAL);
+	on_each_cpu(rtas_percpu_suspend_me, &data, 0);
 
 	wait_for_completion(&done);
 
@@ -1011,7 +1006,6 @@ out_hotplug_enable:
 				__func__);
 
 out:
-	unlock_device_hotplug();
 	free_cpumask_var(offline_mask);
 	return atomic_read(&data.error);
 }
