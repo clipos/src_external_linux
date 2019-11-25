@@ -1476,45 +1476,6 @@ static inline bool slab_free_freelist_hook(struct kmem_cache *s,
 	void *old_tail = *tail ? *tail : *head;
 	int rsize;
 
-	if (IS_ENABLED(CONFIG_SLAB_CANARY) || slab_want_init_on_free(s)) {
-		void *p = NULL;
-
-		do {
-			object = next;
-			next = get_freepointer(s, object);
-			check_canary(s, object, s->random_active);
-
-			if (slab_want_init_on_free(s)) {
-				/*
-				 * Clear the object and the metadata, but don't touch
-				 * the redzone.
-				 */
-				memset(object, 0, s->object_size);
-				rsize = (s->flags & SLAB_RED_ZONE) ? s->red_left_pad
-								   : 0;
-				memset((char *)object + s->inuse, 0,
-				       s->size - s->inuse - rsize);
-				if (!IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) && s->ctor)
-					s->ctor(object);
-				set_freepointer(s, object, p);
-				p = object;
-			}
-
-			set_canary(s, object, s->random_inactive);
-		} while (object != old_tail);
-	}
-
-/*
- * Compiler cannot detect this function can be removed if slab_free_hook()
- * evaluates to nothing.  Thus, catch all relevant config debug options here.
- */
-#if defined(CONFIG_LOCKDEP)	||		\
-	defined(CONFIG_DEBUG_KMEMLEAK) ||	\
-	defined(CONFIG_DEBUG_OBJECTS_FREE) ||	\
-	defined(CONFIG_KASAN)
-
-	next = *head;
-
 	/* Head and tail of the reconstructed freelist */
 	*head = NULL;
 	*tail = NULL;
@@ -1522,6 +1483,25 @@ static inline bool slab_free_freelist_hook(struct kmem_cache *s,
 	do {
 		object = next;
 		next = get_freepointer(s, object);
+
+		check_canary(s, object, s->random_active);
+
+		if (slab_want_init_on_free(s)) {
+			/*
+			 * Clear the object and the metadata, but don't touch
+			 * the redzone.
+			 */
+			memset(object, 0, s->object_size);
+			rsize = (s->flags & SLAB_RED_ZONE) ? s->red_left_pad
+							   : 0;
+			memset((char *)object + s->inuse, 0,
+			       s->size - s->inuse - rsize);
+			if (!IS_ENABLED(CONFIG_SLAB_SANITIZE_VERIFY) && s->ctor)
+				s->ctor(object);
+		}
+
+		set_canary(s, object, s->random_inactive);
+
 		/* If object's reuse doesn't have to be delayed */
 		if (!slab_free_hook(s, object)) {
 			/* Move object to the new freelist */
@@ -1529,6 +1509,17 @@ static inline bool slab_free_freelist_hook(struct kmem_cache *s,
 			*head = object;
 			if (!*tail)
 				*tail = object;
+		} else if (s->ctor) {
+			/* Objects that are put into quarantine by KASAN will
+			 * still undergo free_consistency_checks() and thus
+			 * need to show a valid freepointer to check_object().
+			 *
+			 * Note that doing this for all caches (not just ctor
+			 * ones, which have s->offset != NULL)) causes a GPF,
+			 * due to KASAN poisoning and the way set_freepointer()
+			 * eventually dereferences the freepointer.
+			 */
+			set_freepointer(s, object, NULL);
 		}
 	} while (object != old_tail);
 
@@ -1536,9 +1527,6 @@ static inline bool slab_free_freelist_hook(struct kmem_cache *s,
 		*tail = NULL;
 
 	return *head != NULL;
-#else
-	return true;
-#endif
 }
 
 static void *setup_object(struct kmem_cache *s, struct page *page,
@@ -4938,7 +4926,17 @@ static ssize_t show_slab_objects(struct kmem_cache *s,
 		}
 	}
 
-	get_online_mems();
+	/*
+	 * It is impossible to take "mem_hotplug_lock" here with "kernfs_mutex"
+	 * already held which will conflict with an existing lock order:
+	 *
+	 * mem_hotplug_lock->slab_mutex->kernfs_mutex
+	 *
+	 * We don't really need mem_hotplug_lock (to hold off
+	 * slab_mem_going_offline_callback) here because slab's memory hot
+	 * unplug code doesn't destroy the kmem_cache->node[] data.
+	 */
+
 #ifdef CONFIG_SLUB_DEBUG
 	if (flags & SO_ALL) {
 		struct kmem_cache_node *n;
@@ -4979,7 +4977,6 @@ static ssize_t show_slab_objects(struct kmem_cache *s,
 			x += sprintf(buf + x, " N%d=%lu",
 					node, nodes[node]);
 #endif
-	put_online_mems();
 	kfree(nodes);
 	return x + sprintf(buf + x, "\n");
 }
