@@ -253,9 +253,9 @@ static int coresight_enable_link(struct coresight_device *csdev,
 				 struct coresight_device *parent,
 				 struct coresight_device *child)
 {
-	int ret = 0;
+	int ret;
 	int link_subtype;
-	int inport, outport;
+	int refport, inport, outport;
 
 	if (!parent || !child)
 		return -EINVAL;
@@ -264,17 +264,29 @@ static int coresight_enable_link(struct coresight_device *csdev,
 	outport = coresight_find_link_outport(csdev, child);
 	link_subtype = csdev->subtype.link_subtype;
 
-	if (link_subtype == CORESIGHT_DEV_SUBTYPE_LINK_MERG && inport < 0)
-		return inport;
-	if (link_subtype == CORESIGHT_DEV_SUBTYPE_LINK_SPLIT && outport < 0)
-		return outport;
+	if (link_subtype == CORESIGHT_DEV_SUBTYPE_LINK_MERG)
+		refport = inport;
+	else if (link_subtype == CORESIGHT_DEV_SUBTYPE_LINK_SPLIT)
+		refport = outport;
+	else
+		refport = 0;
 
-	if (link_ops(csdev)->enable)
-		ret = link_ops(csdev)->enable(csdev, inport, outport);
-	if (!ret)
-		csdev->enable = true;
+	if (refport < 0)
+		return refport;
 
-	return ret;
+	if (atomic_inc_return(&csdev->refcnt[refport]) == 1) {
+		if (link_ops(csdev)->enable) {
+			ret = link_ops(csdev)->enable(csdev, inport, outport);
+			if (ret) {
+				atomic_dec(&csdev->refcnt[refport]);
+				return ret;
+			}
+		}
+	}
+
+	csdev->enable = true;
+
+	return 0;
 }
 
 static void coresight_disable_link(struct coresight_device *csdev,
@@ -283,7 +295,7 @@ static void coresight_disable_link(struct coresight_device *csdev,
 {
 	int i, nr_conns;
 	int link_subtype;
-	int inport, outport;
+	int refport, inport, outport;
 
 	if (!parent || !child)
 		return;
@@ -293,15 +305,20 @@ static void coresight_disable_link(struct coresight_device *csdev,
 	link_subtype = csdev->subtype.link_subtype;
 
 	if (link_subtype == CORESIGHT_DEV_SUBTYPE_LINK_MERG) {
+		refport = inport;
 		nr_conns = csdev->pdata->nr_inport;
 	} else if (link_subtype == CORESIGHT_DEV_SUBTYPE_LINK_SPLIT) {
+		refport = outport;
 		nr_conns = csdev->pdata->nr_outport;
 	} else {
+		refport = 0;
 		nr_conns = 1;
 	}
 
-	if (link_ops(csdev)->disable)
-		link_ops(csdev)->disable(csdev, inport, outport);
+	if (atomic_dec_return(&csdev->refcnt[refport]) == 0) {
+		if (link_ops(csdev)->disable)
+			link_ops(csdev)->disable(csdev, inport, outport);
+	}
 
 	for (i = 0; i < nr_conns; i++)
 		if (atomic_read(&csdev->refcnt[i]) != 0)
@@ -1029,9 +1046,7 @@ static void coresight_fixup_device_conns(struct coresight_device *csdev)
 		struct coresight_connection *conn = &csdev->pdata->conns[i];
 		struct device *dev = NULL;
 
-		dev = bus_find_device(&coresight_bustype, NULL,
-				      (void *)conn->child_fwnode,
-				      coresight_device_fwnode_match);
+		dev = bus_find_device_by_fwnode(&coresight_bustype, conn->child_fwnode);
 		if (dev) {
 			conn->child_dev = to_coresight_device(dev);
 			/* and put reference from 'bus_find_device()' */

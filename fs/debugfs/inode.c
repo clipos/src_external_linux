@@ -26,6 +26,7 @@
 #include <linux/parser.h>
 #include <linux/magic.h>
 #include <linux/slab.h>
+#include <linux/security.h>
 
 #include "internal.h"
 
@@ -42,9 +43,10 @@ static bool debugfs_registered;
  */
 static int debugfs_setattr(struct dentry *dentry, struct iattr *ia)
 {
-	if ((ia->ia_valid & (ATTR_MODE | ATTR_UID | ATTR_GID)) &&
-	    kernel_is_locked_down("changing perms in debugfs"))
-		return -EPERM;
+	int ret = security_locked_down(LOCKDOWN_DEBUGFS);
+
+	if (ret && (ia->ia_valid & (ATTR_MODE | ATTR_UID | ATTR_GID)))
+		return ret;
 	return simple_setattr(dentry, ia);
 }
 

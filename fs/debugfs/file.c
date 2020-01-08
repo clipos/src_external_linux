@@ -19,6 +19,7 @@
 #include <linux/atomic.h>
 #include <linux/device.h>
 #include <linux/poll.h>
+#include <linux/security.h>
 
 #include "internal.h"
 
@@ -152,7 +153,7 @@ static bool debugfs_is_locked_down(struct inode *inode,
 	    !real_fops->mmap)
 		return false;
 
-	return kernel_is_locked_down("debugfs");
+	return security_locked_down(LOCKDOWN_DEBUGFS);
 }
 
 static int open_proxy_open(struct inode *inode, struct file *filp)
@@ -167,10 +168,9 @@ static int open_proxy_open(struct inode *inode, struct file *filp)
 
 	real_fops = debugfs_real_fops(filp);
 
-	if (debugfs_is_locked_down(inode, filp, real_fops)) {
-		r = -EPERM;
+	r = debugfs_is_locked_down(inode, filp, real_fops);
+	if (r)
 		goto out;
-	}
 
 	real_fops = fops_get(real_fops);
 	if (!real_fops) {
@@ -297,10 +297,10 @@ static int full_proxy_open(struct inode *inode, struct file *filp)
 		return r == -EIO ? -ENOENT : r;
 
 	real_fops = debugfs_real_fops(filp);
-	if (debugfs_is_locked_down(inode, filp, real_fops)) {
-		r = -EPERM;
+
+	r = debugfs_is_locked_down(inode, filp, real_fops);
+	if (r)
 		goto out;
-	}
 
 	real_fops = fops_get(real_fops);
 	if (!real_fops) {

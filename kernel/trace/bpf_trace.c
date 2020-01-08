@@ -142,10 +142,9 @@ BPF_CALL_3(bpf_probe_read, void *, dst, u32, size, const void *, unsafe_ptr)
 {
 	int ret;
 
-	if (kernel_is_locked_down("Use of bpf to read kernel RAM")) {
-		ret = -EPERM;
+	ret = security_locked_down(LOCKDOWN_BPF_READ);
+	if (ret < 0)
 		goto out;
-	}
 
 	ret = probe_kernel_read(dst, unsafe_ptr, size);
 	if (unlikely(ret < 0))
@@ -591,10 +590,9 @@ BPF_CALL_3(bpf_probe_read_str, void *, dst, u32, size,
 {
 	int ret;
 
-	if (kernel_is_locked_down("Use of bpf to read kernel RAM")) {
-		ret = -EPERM;
+	ret = security_locked_down(LOCKDOWN_BPF_READ);
+	if (ret < 0)
 		goto out;
-	}
 
 	/*
 	 * The strncpy_from_unsafe() call will likely not fill the entire

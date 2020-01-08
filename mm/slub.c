@@ -873,7 +873,7 @@ static int slab_pad_check(struct kmem_cache *s, struct page *page)
 		return 1;
 
 	start = page_address(page);
-	length = PAGE_SIZE << compound_order(page);
+	length = page_size(page);
 	end = start + length;
 	remainder = length % s->size;
 	if (!remainder)
@@ -1118,13 +1118,14 @@ static void setup_object_debug(struct kmem_cache *s, struct page *page,
 	init_tracking(s, object);
 }
 
-static void setup_page_debug(struct kmem_cache *s, void *addr, int order)
+static
+void setup_page_debug(struct kmem_cache *s, struct page *page, void *addr)
 {
 	if (!(s->flags & SLAB_POISON))
 		return;
 
 	metadata_access_enable();
-	memset(addr, POISON_INUSE, PAGE_SIZE << order);
+	memset(addr, POISON_INUSE, page_size(page));
 	metadata_access_disable();
 }
 
@@ -1384,8 +1385,8 @@ slab_flags_t kmem_cache_flags(unsigned int object_size,
 #else /* !CONFIG_SLUB_DEBUG */
 static inline void setup_object_debug(struct kmem_cache *s,
 			struct page *page, void *object) {}
-static inline void setup_page_debug(struct kmem_cache *s,
-			void *addr, int order) {}
+static inline
+void setup_page_debug(struct kmem_cache *s, struct page *page, void *addr) {}
 
 static inline int alloc_debug_processing(struct kmem_cache *s,
 	struct page *page, void *object, unsigned long addr) { return 0; }
@@ -1509,7 +1510,7 @@ static inline bool slab_free_freelist_hook(struct kmem_cache *s,
 			*head = object;
 			if (!*tail)
 				*tail = object;
-		} else if (s->ctor) {
+		} else if (slab_want_init_on_free(s) && s->ctor) {
 			/* Objects that are put into quarantine by KASAN will
 			 * still undergo free_consistency_checks() and thus
 			 * need to show a valid freepointer to check_object().
@@ -1680,7 +1681,7 @@ static struct page *allocate_slab(struct kmem_cache *s, gfp_t flags, int node)
 	struct kmem_cache_order_objects oo = s->oo;
 	gfp_t alloc_gfp;
 	void *start, *p, *next;
-	int idx, order;
+	int idx;
 	bool shuffle;
 
 	flags &= gfp_allowed_mask;
@@ -1714,7 +1715,6 @@ static struct page *allocate_slab(struct kmem_cache *s, gfp_t flags, int node)
 
 	page->objects = oo_objects(oo);
 
-	order = compound_order(page);
 	page->slab_cache = s;
 	__SetPageSlab(page);
 	if (page_is_pfmemalloc(page))
@@ -1724,7 +1724,7 @@ static struct page *allocate_slab(struct kmem_cache *s, gfp_t flags, int node)
 
 	start = page_address(page);
 
-	setup_page_debug(s, start, order);
+	setup_page_debug(s, page, start);
 
 	shuffle = shuffle_freelist(s, page);
 
@@ -2045,6 +2045,7 @@ static inline unsigned long next_tid(unsigned long tid)
 	return tid + TID_STEP;
 }
 
+#ifdef SLUB_DEBUG_CMPXCHG
 static inline unsigned int tid_to_cpu(unsigned long tid)
 {
 	return tid % TID_STEP;
@@ -2054,6 +2055,7 @@ static inline unsigned long tid_to_event(unsigned long tid)
 {
 	return tid / TID_STEP;
 }
+#endif
 
 static inline unsigned int init_tid(int cpu)
 {
@@ -2821,8 +2823,14 @@ redo:
 		if (s->ctor)
 			s->ctor(object);
 		kasan_poison_object_data(s, object);
-	} else if (unlikely(slab_want_init_on_alloc(gfpflags, s)) && object)
+	} else if (unlikely(slab_want_init_on_alloc(gfpflags, s)) && object) {
 		memset(object, 0, s->object_size);
+		if (s->ctor) {
+			kasan_unpoison_object_data(s, object);
+			s->ctor(object);
+			kasan_poison_object_data(s, object);
+		}
+	}
 
 	if (object) {
 		check_canary(s, object, s->random_inactive);
@@ -3266,8 +3274,14 @@ int kmem_cache_alloc_bulk(struct kmem_cache *s, gfp_t flags, size_t size,
 	} else if (unlikely(slab_want_init_on_alloc(flags, s))) {
 		int j;
 
-		for (j = 0; j < i; j++)
+		for (j = 0; j < i; j++) {
 			memset(p[j], 0, s->object_size);
+			if (s->ctor) {
+				kasan_unpoison_object_data(s, p[j]);
+				s->ctor(p[j]);
+				kasan_poison_object_data(s, p[j]);
+			}
+		}
 	}
 
 	for (k = 0; k < i; k++) {
@@ -3910,11 +3924,15 @@ static void *kmalloc_large_node(size_t size, gfp_t flags, int node)
 {
 	struct page *page;
 	void *ptr = NULL;
+	unsigned int order = get_order(size);
 
 	flags |= __GFP_COMP;
-	page = alloc_pages_node(node, flags, get_order(size));
-	if (page)
+	page = alloc_pages_node(node, flags, order);
+	if (page) {
 		ptr = page_address(page);
+		mod_node_page_state(page_pgdat(page), NR_SLAB_UNRECLAIMABLE,
+				    1 << order);
+	}
 
 	return kmalloc_large_node_hook(ptr, size, flags);
 }
@@ -4027,7 +4045,7 @@ size_t __ksize(const void *object)
 #else
 		WARN_ON(!PageCompound(page));
 #endif
-		return PAGE_SIZE << compound_order(page);
+		return page_size(page);
 	}
 
 	return slab_ksize(page->slab_cache);
@@ -4046,9 +4064,13 @@ void kfree(const void *x)
 
 	page = virt_to_head_page(x);
 	if (unlikely(!PageSlab(page))) {
+		unsigned int order = compound_order(page);
+
 		BUG_ON(!PageCompound(page));
 		kfree_hook(object);
-		__free_pages(page, compound_order(page));
+		mod_node_page_state(page_pgdat(page), NR_SLAB_UNRECLAIMABLE,
+				    -(1 << order));
+		__free_pages(page, order);
 		return;
 	}
 	slab_free(page->slab_cache, page, object, NULL, 1, _RET_IP_);
@@ -5404,7 +5426,7 @@ static ssize_t shrink_store(struct kmem_cache *s,
 			const char *buf, size_t length)
 {
 	if (buf[0] == '1')
-		kmem_cache_shrink(s);
+		kmem_cache_shrink_all(s);
 	else
 		return -EINVAL;
 	return length;

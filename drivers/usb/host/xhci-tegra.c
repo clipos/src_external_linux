@@ -755,6 +755,7 @@ static int tegra_xusb_runtime_suspend(struct device *dev)
 {
 	struct tegra_xusb *tegra = dev_get_drvdata(dev);
 
+	tegra_xusb_phy_disable(tegra);
 	regulator_bulk_disable(tegra->soc->num_supplies, tegra->supplies);
 	tegra_xusb_clk_disable(tegra);
 
@@ -778,8 +779,16 @@ static int tegra_xusb_runtime_resume(struct device *dev)
 		goto disable_clk;
 	}
 
+	err = tegra_xusb_phy_enable(tegra);
+	if (err < 0) {
+		dev_err(dev, "failed to enable PHYs: %d\n", err);
+		goto disable_regulator;
+	}
+
 	return 0;
 
+disable_regulator:
+	regulator_bulk_disable(tegra->soc->num_supplies, tegra->supplies);
 disable_clk:
 	tegra_xusb_clk_disable(tegra);
 	return err;
@@ -1172,12 +1181,6 @@ static int tegra_xusb_probe(struct platform_device *pdev)
 	 */
 	platform_set_drvdata(pdev, tegra);
 
-	err = tegra_xusb_phy_enable(tegra);
-	if (err < 0) {
-		dev_err(&pdev->dev, "failed to enable PHYs: %d\n", err);
-		goto put_hcd;
-	}
-
 	pm_runtime_enable(&pdev->dev);
 	if (pm_runtime_enabled(&pdev->dev))
 		err = pm_runtime_get_sync(&pdev->dev);
@@ -1186,7 +1189,7 @@ static int tegra_xusb_probe(struct platform_device *pdev)
 
 	if (err < 0) {
 		dev_err(&pdev->dev, "failed to enable device: %d\n", err);
-		goto disable_phy;
+		goto disable_rpm;
 	}
 
 	tegra_xusb_config(tegra, regs);
@@ -1272,11 +1275,9 @@ remove_usb2:
 put_rpm:
 	if (!pm_runtime_status_suspended(&pdev->dev))
 		tegra_xusb_runtime_suspend(&pdev->dev);
-put_hcd:
-	usb_put_hcd(tegra->hcd);
-disable_phy:
-	tegra_xusb_phy_disable(tegra);
+disable_rpm:
 	pm_runtime_disable(&pdev->dev);
+	usb_put_hcd(tegra->hcd);
 put_powerdomains:
 	if (!of_property_read_bool(pdev->dev.of_node, "power-domains")) {
 		tegra_powergate_power_off(TEGRA_POWERGATE_XUSBC);
@@ -1312,8 +1313,6 @@ static int tegra_xusb_remove(struct platform_device *pdev)
 	} else {
 		tegra_xusb_powerdomain_remove(&pdev->dev, tegra);
 	}
-
-	tegra_xusb_phy_disable(tegra);
 
 	tegra_xusb_padctl_put(tegra->padctl);
 

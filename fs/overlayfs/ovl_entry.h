@@ -22,8 +22,6 @@ struct ovl_config {
 struct ovl_sb {
 	struct super_block *sb;
 	dev_t pseudo_dev;
-	/* Unusable (conflicting) uuid */
-	bool bad_uuid;
 };
 
 struct ovl_layer {

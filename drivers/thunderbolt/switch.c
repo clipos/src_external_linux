@@ -168,7 +168,7 @@ static int nvm_validate_and_write(struct tb_switch *sw)
 
 static int nvm_authenticate_host(struct tb_switch *sw)
 {
-	int ret = 0;
+	int ret;
 
 	/*
 	 * Root switch NVM upgrade requires that we disconnect the
@@ -176,8 +176,6 @@ static int nvm_authenticate_host(struct tb_switch *sw)
 	 * already).
 	 */
 	if (!sw->safe_mode) {
-		u32 status;
-
 		ret = tb_domain_disconnect_all_paths(sw->tb);
 		if (ret)
 			return ret;
@@ -186,16 +184,7 @@ static int nvm_authenticate_host(struct tb_switch *sw)
 		 * everything goes well so getting timeout is expected.
 		 */
 		ret = dma_port_flash_update_auth(sw->dma_port);
-		if (!ret || ret == -ETIMEDOUT)
-			return 0;
-
-		/*
-		 * Any error from update auth operation requires power
-		 * cycling of the host router.
-		 */
-		tb_sw_warn(sw, "failed to authenticate NVM, power cycling\n");
-		if (dma_port_flash_update_auth_status(sw->dma_port, &status) > 0)
-			nvm_set_auth_status(sw, status);
+		return ret == -ETIMEDOUT ? 0 : ret;
 	}
 
 	/*
@@ -203,7 +192,7 @@ static int nvm_authenticate_host(struct tb_switch *sw)
 	 * switch.
 	 */
 	dma_port_power_cycle(sw->dma_port);
-	return ret;
+	return 0;
 }
 
 static int nvm_authenticate_device(struct tb_switch *sw)
@@ -211,16 +200,8 @@ static int nvm_authenticate_device(struct tb_switch *sw)
 	int ret, retries = 10;
 
 	ret = dma_port_flash_update_auth(sw->dma_port);
-	switch (ret) {
-	case 0:
-	case -ETIMEDOUT:
-	case -EACCES:
-	case -EINVAL:
-		/* Power cycle is required */
-		break;
-	default:
+	if (ret && ret != -ETIMEDOUT)
 		return ret;
-	}
 
 	/*
 	 * Poll here for the authentication status. It takes some time
@@ -383,12 +364,14 @@ static int tb_switch_nvm_add(struct tb_switch *sw)
 		nvm->active = nvm_dev;
 	}
 
-	nvm_dev = register_nvmem(sw, nvm->id, NVM_MAX_SIZE, false);
-	if (IS_ERR(nvm_dev)) {
-		ret = PTR_ERR(nvm_dev);
-		goto err_nvm_active;
+	if (!sw->no_nvm_upgrade) {
+		nvm_dev = register_nvmem(sw, nvm->id, NVM_MAX_SIZE, false);
+		if (IS_ERR(nvm_dev)) {
+			ret = PTR_ERR(nvm_dev);
+			goto err_nvm_active;
+		}
+		nvm->non_active = nvm_dev;
 	}
-	nvm->non_active = nvm_dev;
 
 	sw->nvm = nvm;
 	return 0;
@@ -417,7 +400,8 @@ static void tb_switch_nvm_remove(struct tb_switch *sw)
 	if (!nvm->authenticating)
 		nvm_clear_auth_status(sw);
 
-	nvmem_unregister(nvm->non_active);
+	if (nvm->non_active)
+		nvmem_unregister(nvm->non_active);
 	if (nvm->active)
 		nvmem_unregister(nvm->active);
 	ida_simple_remove(&nvm_ida, nvm->id);
@@ -630,8 +614,14 @@ static int tb_init_port(struct tb_port *port)
 	int cap;
 
 	res = tb_port_read(port, &port->config, TB_CFG_PORT, 0, 8);
-	if (res)
+	if (res) {
+		if (res == -ENODEV) {
+			tb_dbg(port->sw->tb, " Port %d: not implemented\n",
+			       port->port);
+			return 0;
+		}
 		return res;
+	}
 
 	/* Port 0 is the switch itself and has no PHY. */
 	if (port->config.type == TB_TYPE_PORT && port->port != 0) {
@@ -1256,6 +1246,8 @@ static ssize_t nvm_authenticate_store(struct device *dev,
 			 */
 			nvm_authenticate_start(sw);
 			ret = nvm_authenticate_host(sw);
+			if (ret)
+				nvm_authenticate_complete(sw);
 		} else {
 			ret = nvm_authenticate_device(sw);
 		}
@@ -1342,14 +1334,29 @@ static umode_t switch_attr_is_visible(struct kobject *kobj,
 	struct device *dev = container_of(kobj, struct device, kobj);
 	struct tb_switch *sw = tb_to_switch(dev);
 
-	if (attr == &dev_attr_key.attr) {
+	if (attr == &dev_attr_device.attr) {
+		if (!sw->device)
+			return 0;
+	} else if (attr == &dev_attr_device_name.attr) {
+		if (!sw->device_name)
+			return 0;
+	} else if (attr == &dev_attr_vendor.attr)  {
+		if (!sw->vendor)
+			return 0;
+	} else if (attr == &dev_attr_vendor_name.attr)  {
+		if (!sw->vendor_name)
+			return 0;
+	} else if (attr == &dev_attr_key.attr) {
 		if (tb_route(sw) &&
 		    sw->tb->security_level == TB_SECURITY_SECURE &&
 		    sw->security_level == TB_SECURITY_SECURE)
 			return attr->mode;
 		return 0;
-	} else if (attr == &dev_attr_nvm_authenticate.attr ||
-		   attr == &dev_attr_nvm_version.attr) {
+	} else if (attr == &dev_attr_nvm_authenticate.attr) {
+		if (sw->dma_port && !sw->no_nvm_upgrade)
+			return attr->mode;
+		return 0;
+	} else if (attr == &dev_attr_nvm_version.attr) {
 		if (sw->dma_port)
 			return attr->mode;
 		return 0;
@@ -1457,6 +1464,8 @@ static int tb_switch_get_generation(struct tb_switch *sw)
 	case PCI_DEVICE_ID_INTEL_TITAN_RIDGE_2C_BRIDGE:
 	case PCI_DEVICE_ID_INTEL_TITAN_RIDGE_4C_BRIDGE:
 	case PCI_DEVICE_ID_INTEL_TITAN_RIDGE_DD_BRIDGE:
+	case PCI_DEVICE_ID_INTEL_ICL_NHI0:
+	case PCI_DEVICE_ID_INTEL_ICL_NHI1:
 		return 3;
 
 	default:
@@ -1681,16 +1690,13 @@ static int tb_switch_add_dma_port(struct tb_switch *sw)
 	int ret;
 
 	switch (sw->generation) {
+	case 3:
+		break;
+
 	case 2:
 		/* Only root switch can be upgraded */
 		if (tb_route(sw))
 			return 0;
-
-		/* fallthrough */
-	case 3:
-		ret = tb_switch_set_uuid(sw);
-		if (ret)
-			return ret;
 		break;
 
 	default:
@@ -1703,25 +1709,16 @@ static int tb_switch_add_dma_port(struct tb_switch *sw)
 		break;
 	}
 
-	if (sw->no_nvm_upgrade)
+	/* Root switch DMA port requires running firmware */
+	if (!tb_route(sw) && sw->config.enabled)
 		return 0;
 
 	sw->dma_port = dma_port_alloc(sw);
 	if (!sw->dma_port)
 		return 0;
 
-	/*
-	 * If there is status already set then authentication failed
-	 * when the dma_port_flash_update_auth() returned. Power cycling
-	 * is not needed (it was done already) so only thing we do here
-	 * is to unblock runtime PM of the root port.
-	 */
-	nvm_get_auth_status(sw, &status);
-	if (status) {
-		if (!tb_route(sw))
-			nvm_authenticate_complete(sw);
+	if (sw->no_nvm_upgrade)
 		return 0;
-	}
 
 	/*
 	 * Check status of the previous flash authentication. If there
@@ -1738,6 +1735,9 @@ static int tb_switch_add_dma_port(struct tb_switch *sw)
 
 	if (status) {
 		tb_sw_info(sw, "switch flash authentication failed\n");
+		ret = tb_switch_set_uuid(sw);
+		if (ret)
+			return ret;
 		nvm_set_auth_status(sw, status);
 	}
 

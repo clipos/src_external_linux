@@ -22,6 +22,7 @@
 #include <linux/serial_core.h>
 #include <linux/delay.h>
 #include <linux/mutex.h>
+#include <linux/security.h>
 
 #include <linux/irq.h>
 #include <linux/uaccess.h>
@@ -846,12 +847,6 @@ static int uart_set_info(struct tty_struct *tty, struct tty_port *port,
 	new_flags = (__force upf_t)new_info->flags;
 	old_custom_divisor = uport->custom_divisor;
 
-	if ((change_port || change_irq) &&
-	    kernel_is_locked_down("Using TIOCSSERIAL to change device addresses, irqs and dma channels")) {
-		retval = -EPERM;
-		goto exit;
-	}
-
 	if (!capable(CAP_SYS_ADMIN)) {
 		retval = -EPERM;
 		if (change_irq || change_port ||
@@ -867,6 +862,10 @@ static int uart_set_info(struct tty_struct *tty, struct tty_port *port,
 		uport->custom_divisor = new_info->custom_divisor;
 		goto check_and_exit;
 	}
+
+	retval = security_locked_down(LOCKDOWN_TIOCSSERIAL);
+	if (retval && (change_irq || change_port))
+		goto exit;
 
 	/*
 	 * Ask the low level driver to verify the settings.
@@ -1112,7 +1111,7 @@ static int uart_break_ctl(struct tty_struct *tty, int break_state)
 	if (!uport)
 		goto out;
 
-	if (uport->type != PORT_UNKNOWN && uport->ops->break_ctl)
+	if (uport->type != PORT_UNKNOWN)
 		uport->ops->break_ctl(uport, break_state);
 	ret = 0;
 out:
@@ -1965,8 +1964,10 @@ uart_get_console(struct uart_port *ports, int nr, struct console *co)
  *	   console=<name>,io|mmio|mmio16|mmio32|mmio32be|mmio32native,<addr>,<options>
  *
  *	The optional form
+ *
  *	   earlycon=<name>,0x<addr>,<options>
  *	   console=<name>,0x<addr>,<options>
+ *
  *	is also accepted; the returned @iotype will be UPIO_MEM.
  *
  *	Returns 0 on success or -EINVAL on failure

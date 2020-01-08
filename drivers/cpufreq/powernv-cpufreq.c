@@ -1041,14 +1041,9 @@ static struct cpufreq_driver powernv_cpufreq_driver = {
 
 static int init_chip_info(void)
 {
-	unsigned int *chip;
+	unsigned int chip[256];
 	unsigned int cpu, i;
 	unsigned int prev_chip_id = UINT_MAX;
-	int ret = 0;
-
-	chip = kcalloc(num_possible_cpus(), sizeof(*chip), GFP_KERNEL);
-	if (!chip)
-		return -ENOMEM;
 
 	for_each_possible_cpu(cpu) {
 		unsigned int id = cpu_to_chip_id(cpu);
@@ -1060,10 +1055,8 @@ static int init_chip_info(void)
 	}
 
 	chips = kcalloc(nr_chips, sizeof(struct chip), GFP_KERNEL);
-	if (!chips) {
-		ret = -ENOMEM;
-		goto free_and_return;
-	}
+	if (!chips)
+		return -ENOMEM;
 
 	for (i = 0; i < nr_chips; i++) {
 		chips[i].id = chip[i];
@@ -1073,9 +1066,7 @@ static int init_chip_info(void)
 			per_cpu(chip_info, cpu) =  &chips[i];
 	}
 
-free_and_return:
-	kfree(chip);
-	return ret;
+	return 0;
 }
 
 static inline void clean_chip_info(void)

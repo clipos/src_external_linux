@@ -623,13 +623,9 @@ static int adis16480_read_raw(struct iio_dev *indio_dev,
 			*val2 = (st->chip_info->temp_scale % 1000) * 1000;
 			return IIO_VAL_INT_PLUS_MICRO;
 		case IIO_PRESSURE:
-			/*
-			 * max scale is 1310 mbar
-			 * max raw value is 32767 shifted for 32bits
-			 */
-			*val = 131; /* 1310mbar = 131 kPa */
-			*val2 = 32767 << 16;
-			return IIO_VAL_FRACTIONAL;
+			*val = 0;
+			*val2 = 4000; /* 40ubar = 0.004 kPa */
+			return IIO_VAL_INT_PLUS_MICRO;
 		default:
 			return -EINVAL;
 		}
@@ -790,14 +786,13 @@ static const struct adis16480_chip_info adis16480_chip_info[] = {
 		.channels = adis16485_channels,
 		.num_channels = ARRAY_SIZE(adis16485_channels),
 		/*
-		 * Typically we do IIO_RAD_TO_DEGREE in the denominator, which
-		 * is exactly the same as IIO_DEGREE_TO_RAD in numerator, since
-		 * it gives better approximation. However, in this case we
-		 * cannot do it since it would not fit in a 32bit variable.
+		 * storing the value in rad/degree and the scale in degree
+		 * gives us the result in rad and better precession than
+		 * storing the scale directly in rad.
 		 */
-		.gyro_max_val = 22887 << 16,
-		.gyro_max_scale = IIO_DEGREE_TO_RAD(300),
-		.accel_max_val = IIO_M_S_2_TO_G(21973 << 16),
+		.gyro_max_val = IIO_RAD_TO_DEGREE(22887),
+		.gyro_max_scale = 300,
+		.accel_max_val = IIO_M_S_2_TO_G(21973),
 		.accel_max_scale = 18,
 		.temp_scale = 5650, /* 5.65 milli degree Celsius */
 		.int_clk = 2460000,
@@ -807,9 +802,9 @@ static const struct adis16480_chip_info adis16480_chip_info[] = {
 	[ADIS16480] = {
 		.channels = adis16480_channels,
 		.num_channels = ARRAY_SIZE(adis16480_channels),
-		.gyro_max_val = 22500 << 16,
-		.gyro_max_scale = IIO_DEGREE_TO_RAD(450),
-		.accel_max_val = IIO_M_S_2_TO_G(12500 << 16),
+		.gyro_max_val = IIO_RAD_TO_DEGREE(22500),
+		.gyro_max_scale = 450,
+		.accel_max_val = IIO_M_S_2_TO_G(12500),
 		.accel_max_scale = 10,
 		.temp_scale = 5650, /* 5.65 milli degree Celsius */
 		.int_clk = 2460000,
@@ -819,9 +814,9 @@ static const struct adis16480_chip_info adis16480_chip_info[] = {
 	[ADIS16485] = {
 		.channels = adis16485_channels,
 		.num_channels = ARRAY_SIZE(adis16485_channels),
-		.gyro_max_val = 22500 << 16,
-		.gyro_max_scale = IIO_DEGREE_TO_RAD(450),
-		.accel_max_val = IIO_M_S_2_TO_G(20000 << 16),
+		.gyro_max_val = IIO_RAD_TO_DEGREE(22500),
+		.gyro_max_scale = 450,
+		.accel_max_val = IIO_M_S_2_TO_G(20000),
 		.accel_max_scale = 5,
 		.temp_scale = 5650, /* 5.65 milli degree Celsius */
 		.int_clk = 2460000,
@@ -831,9 +826,9 @@ static const struct adis16480_chip_info adis16480_chip_info[] = {
 	[ADIS16488] = {
 		.channels = adis16480_channels,
 		.num_channels = ARRAY_SIZE(adis16480_channels),
-		.gyro_max_val = 22500 << 16,
-		.gyro_max_scale = IIO_DEGREE_TO_RAD(450),
-		.accel_max_val = IIO_M_S_2_TO_G(22500 << 16),
+		.gyro_max_val = IIO_RAD_TO_DEGREE(22500),
+		.gyro_max_scale = 450,
+		.accel_max_val = IIO_M_S_2_TO_G(22500),
 		.accel_max_scale = 18,
 		.temp_scale = 5650, /* 5.65 milli degree Celsius */
 		.int_clk = 2460000,
@@ -843,9 +838,9 @@ static const struct adis16480_chip_info adis16480_chip_info[] = {
 	[ADIS16495_1] = {
 		.channels = adis16485_channels,
 		.num_channels = ARRAY_SIZE(adis16485_channels),
-		.gyro_max_val = 20000 << 16,
-		.gyro_max_scale = IIO_DEGREE_TO_RAD(125),
-		.accel_max_val = IIO_M_S_2_TO_G(32000 << 16),
+		.gyro_max_val = IIO_RAD_TO_DEGREE(20000),
+		.gyro_max_scale = 125,
+		.accel_max_val = IIO_M_S_2_TO_G(32000),
 		.accel_max_scale = 8,
 		.temp_scale = 12500, /* 12.5 milli degree Celsius */
 		.int_clk = 4250000,
@@ -856,9 +851,9 @@ static const struct adis16480_chip_info adis16480_chip_info[] = {
 	[ADIS16495_2] = {
 		.channels = adis16485_channels,
 		.num_channels = ARRAY_SIZE(adis16485_channels),
-		.gyro_max_val = 18000 << 16,
-		.gyro_max_scale = IIO_DEGREE_TO_RAD(450),
-		.accel_max_val = IIO_M_S_2_TO_G(32000 << 16),
+		.gyro_max_val = IIO_RAD_TO_DEGREE(18000),
+		.gyro_max_scale = 450,
+		.accel_max_val = IIO_M_S_2_TO_G(32000),
 		.accel_max_scale = 8,
 		.temp_scale = 12500, /* 12.5 milli degree Celsius */
 		.int_clk = 4250000,
@@ -869,9 +864,9 @@ static const struct adis16480_chip_info adis16480_chip_info[] = {
 	[ADIS16495_3] = {
 		.channels = adis16485_channels,
 		.num_channels = ARRAY_SIZE(adis16485_channels),
-		.gyro_max_val = 20000 << 16,
-		.gyro_max_scale = IIO_DEGREE_TO_RAD(2000),
-		.accel_max_val = IIO_M_S_2_TO_G(32000 << 16),
+		.gyro_max_val = IIO_RAD_TO_DEGREE(20000),
+		.gyro_max_scale = 2000,
+		.accel_max_val = IIO_M_S_2_TO_G(32000),
 		.accel_max_scale = 8,
 		.temp_scale = 12500, /* 12.5 milli degree Celsius */
 		.int_clk = 4250000,
@@ -882,9 +877,9 @@ static const struct adis16480_chip_info adis16480_chip_info[] = {
 	[ADIS16497_1] = {
 		.channels = adis16485_channels,
 		.num_channels = ARRAY_SIZE(adis16485_channels),
-		.gyro_max_val = 20000 << 16,
-		.gyro_max_scale = IIO_DEGREE_TO_RAD(125),
-		.accel_max_val = IIO_M_S_2_TO_G(32000 << 16),
+		.gyro_max_val = IIO_RAD_TO_DEGREE(20000),
+		.gyro_max_scale = 125,
+		.accel_max_val = IIO_M_S_2_TO_G(32000),
 		.accel_max_scale = 40,
 		.temp_scale = 12500, /* 12.5 milli degree Celsius */
 		.int_clk = 4250000,
@@ -895,9 +890,9 @@ static const struct adis16480_chip_info adis16480_chip_info[] = {
 	[ADIS16497_2] = {
 		.channels = adis16485_channels,
 		.num_channels = ARRAY_SIZE(adis16485_channels),
-		.gyro_max_val = 18000 << 16,
-		.gyro_max_scale = IIO_DEGREE_TO_RAD(450),
-		.accel_max_val = IIO_M_S_2_TO_G(32000 << 16),
+		.gyro_max_val = IIO_RAD_TO_DEGREE(18000),
+		.gyro_max_scale = 450,
+		.accel_max_val = IIO_M_S_2_TO_G(32000),
 		.accel_max_scale = 40,
 		.temp_scale = 12500, /* 12.5 milli degree Celsius */
 		.int_clk = 4250000,
@@ -908,9 +903,9 @@ static const struct adis16480_chip_info adis16480_chip_info[] = {
 	[ADIS16497_3] = {
 		.channels = adis16485_channels,
 		.num_channels = ARRAY_SIZE(adis16485_channels),
-		.gyro_max_val = 20000 << 16,
-		.gyro_max_scale = IIO_DEGREE_TO_RAD(2000),
-		.accel_max_val = IIO_M_S_2_TO_G(32000 << 16),
+		.gyro_max_val = IIO_RAD_TO_DEGREE(20000),
+		.gyro_max_scale = 2000,
+		.accel_max_val = IIO_M_S_2_TO_G(32000),
 		.accel_max_scale = 40,
 		.temp_scale = 12500, /* 12.5 milli degree Celsius */
 		.int_clk = 4250000,
@@ -924,7 +919,6 @@ static const struct iio_info adis16480_info = {
 	.read_raw = &adis16480_read_raw,
 	.write_raw = &adis16480_write_raw,
 	.update_scan_mode = adis_update_scan_mode,
-	.debugfs_reg_access = adis_debugfs_reg_access,
 };
 
 static int adis16480_stop_device(struct iio_dev *indio_dev)

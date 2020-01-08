@@ -141,11 +141,7 @@ static int vivid_thread_sdr_cap(void *data)
 		if (kthread_should_stop())
 			break;
 
-		if (!mutex_trylock(&dev->mutex)) {
-			schedule_timeout_uninterruptible(1);
-			continue;
-		}
-
+		mutex_lock(&dev->mutex);
 		cur_jiffies = jiffies;
 		if (dev->sdr_cap_seq_resync) {
 			dev->jiffies_sdr_cap = cur_jiffies;
@@ -307,8 +303,10 @@ static void sdr_cap_stop_streaming(struct vb2_queue *vq)
 	}
 
 	/* shutdown control thread */
+	mutex_unlock(&dev->mutex);
 	kthread_stop(dev->kthread_sdr_cap);
 	dev->kthread_sdr_cap = NULL;
+	mutex_lock(&dev->mutex);
 }
 
 static void sdr_cap_buf_request_complete(struct vb2_buffer *vb)

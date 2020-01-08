@@ -217,7 +217,9 @@ extern void __cant_sleep(const char *file, int line, int preempt_offset);
  * might_sleep - annotation for functions that can sleep
  *
  * this macro will print a stack trace if it is executed in an atomic
- * context (spinlock, irq-handler, ...).
+ * context (spinlock, irq-handler, ...). Additional sections where blocking is
+ * not allowed can be annotated with non_block_start() and non_block_end()
+ * pairs.
  *
  * This is a useful debugging help to be able to catch problems early and not
  * be bitten later when the calling function happens to sleep when it is not
@@ -233,6 +235,23 @@ extern void __cant_sleep(const char *file, int line, int preempt_offset);
 # define cant_sleep() \
 	do { __cant_sleep(__FILE__, __LINE__, 0); } while (0)
 # define sched_annotate_sleep()	(current->task_state_change = 0)
+/**
+ * non_block_start - annotate the start of section where sleeping is prohibited
+ *
+ * This is on behalf of the oom reaper, specifically when it is calling the mmu
+ * notifiers. The problem is that if the notifier were to block on, for example,
+ * mutex_lock() and if the process which holds that mutex were to perform a
+ * sleeping memory allocation, the oom reaper is now blocked on completion of
+ * that memory allocation. Other blocking calls like wait_event() pose similar
+ * issues.
+ */
+# define non_block_start() (current->non_block_count++)
+/**
+ * non_block_end - annotate the end of section where sleeping is prohibited
+ *
+ * Closes a section opened by non_block_start().
+ */
+# define non_block_end() WARN_ON(current->non_block_count-- == 0)
 #else
   static inline void ___might_sleep(const char *file, int line,
 				   int preempt_offset) { }
@@ -241,6 +260,8 @@ extern void __cant_sleep(const char *file, int line, int preempt_offset);
 # define might_sleep() do { might_resched(); } while (0)
 # define cant_sleep() do { } while (0)
 # define sched_annotate_sleep() do { } while (0)
+# define non_block_start() do { } while (0)
+# define non_block_end() do { } while (0)
 #endif
 
 #define might_sleep_if(cond) do { if (cond) might_sleep(); } while (0)
@@ -312,38 +333,6 @@ void refcount_error_report(struct pt_regs *regs, const char *err);
 #else
 static inline void refcount_error_report(struct pt_regs *regs, const char *err)
 { }
-#endif
-
-#ifdef CONFIG_LOCK_DOWN_KERNEL
-extern void __init init_lockdown(void);
-extern bool __kernel_is_locked_down(const char *what, bool first);
-
-#ifndef CONFIG_LOCK_DOWN_MANDATORY
-#define kernel_is_locked_down(what)					\
-	({								\
-		static bool message_given;				\
-		bool locked_down = __kernel_is_locked_down(what, !message_given); \
-		message_given = true;					\
-		locked_down;						\
-	})
-#else
-#define kernel_is_locked_down(what)					\
-	({								\
-		static bool message_given;				\
-		__kernel_is_locked_down(what, !message_given);		\
-		message_given = true;					\
-		true;							\
-	})
-#endif
-#else
-static inline void __init init_lockdown(void)
-{
-}
-static inline bool __kernel_is_locked_down(const char *what, bool first)
-{
-	return false;
-}
-#define kernel_is_locked_down(what) ({ false; })
 #endif
 
 /* Internal, do not use. */

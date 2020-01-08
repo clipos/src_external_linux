@@ -382,8 +382,12 @@ qla2x00_mailbox_command(scsi_qla_host_t *vha, mbx_cmd_t *mcp)
 			goto premature_exit;
 		}
 
-		if (ha->mailbox_out[0] != MBS_COMMAND_COMPLETE)
+		if (ha->mailbox_out[0] != MBS_COMMAND_COMPLETE) {
+			ql_dbg(ql_dbg_mbx, vha, 0x11ff,
+			       "mb_out[0] = %#x <> %#x\n", ha->mailbox_out[0],
+			       MBS_COMMAND_COMPLETE);
 			rval = QLA_FUNCTION_FAILED;
+		}
 
 		/* Load return mailbox registers. */
 		iptr2 = mcp->mb;
@@ -6221,10 +6225,8 @@ qla26xx_dport_diagnostics(scsi_qla_host_t *vha,
 	return rval;
 }
 
-static void qla2x00_async_mb_sp_done(void *s, int res)
+static void qla2x00_async_mb_sp_done(srb_t *sp, int res)
 {
-	struct srb *sp = s;
-
 	sp->u.iocb_cmd.u.mbx.rc = res;
 
 	complete(&sp->u.iocb_cmd.u.mbx.comp);
@@ -6285,12 +6287,16 @@ int qla24xx_send_mb_cmd(struct scsi_qla_host *vha, mbx_cmd_t *mcp)
 	case  QLA_SUCCESS:
 		ql_dbg(ql_dbg_mbx, vha, 0x119d, "%s: %s done.\n",
 		    __func__, sp->name);
+		sp->free(sp);
 		break;
 	default:
 		ql_dbg(ql_dbg_mbx, vha, 0x119e, "%s: %s Failed. %x.\n",
 		    __func__, sp->name, rval);
+		sp->free(sp);
 		break;
 	}
+
+	return rval;
 
 done_free_sp:
 	sp->free(sp);

@@ -705,7 +705,8 @@ static int tls_push_record(struct sock *sk, int flags,
 	}
 
 	i = msg_pl->sg.start;
-	sg_chain(rec->sg_aead_in, 2, &msg_pl->sg.data[i]);
+	sg_chain(rec->sg_aead_in, 2, rec->inplace_crypto ?
+		 &msg_en->sg.data[i] : &msg_pl->sg.data[i]);
 
 	i = msg_en->sg.end;
 	sk_msg_iter_var_prev(i);
@@ -765,14 +766,8 @@ static int bpf_exec_tx_verdict(struct sk_msg *msg, struct sock *sk,
 
 	policy = !(flags & MSG_SENDPAGE_NOPOLICY);
 	psock = sk_psock_get(sk);
-	if (!psock || !policy) {
-		err = tls_push_record(sk, flags, record_type);
-		if (err) {
-			*copied -= sk_msg_free(sk, msg);
-			tls_free_open_rec(sk);
-		}
-		return err;
-	}
+	if (!psock || !policy)
+		return tls_push_record(sk, flags, record_type);
 more_data:
 	enospc = sk_msg_full(msg);
 	if (psock->eval == __SK_NONE) {
@@ -900,7 +895,7 @@ int tls_sw_sendmsg(struct sock *sk, struct msghdr *msg, size_t size)
 	int ret = 0;
 
 	if (msg->msg_flags & ~(MSG_MORE | MSG_DONTWAIT | MSG_NOSIGNAL))
-		return -EOPNOTSUPP;
+		return -ENOTSUPP;
 
 	mutex_lock(&tls_ctx->tx_lock);
 	lock_sock(sk);
@@ -970,6 +965,8 @@ alloc_encrypted:
 			if (ret)
 				goto fallback_to_reg_send;
 
+			rec->inplace_crypto = 0;
+
 			num_zc++;
 			copied += try_to_copy;
 
@@ -982,7 +979,7 @@ alloc_encrypted:
 					num_async++;
 				else if (ret == -ENOMEM)
 					goto wait_for_memory;
-				else if (ctx->open_rec && ret == -ENOSPC)
+				else if (ret == -ENOSPC)
 					goto rollback_iter;
 				else if (ret != -EAGAIN)
 					goto send_end;
@@ -1051,12 +1048,11 @@ wait_for_memory:
 		ret = sk_stream_wait_memory(sk, &timeo);
 		if (ret) {
 trim_sgl:
-			if (ctx->open_rec)
-				tls_trim_both_msgs(sk, orig_size);
+			tls_trim_both_msgs(sk, orig_size);
 			goto send_end;
 		}
 
-		if (ctx->open_rec && msg_en->sg.size < required_size)
+		if (msg_en->sg.size < required_size)
 			goto alloc_encrypted;
 	}
 
@@ -1168,6 +1164,7 @@ alloc_payload:
 
 		tls_ctx->pending_open_record_frags = true;
 		if (full_record || eor || sk_msg_full(msg_pl)) {
+			rec->inplace_crypto = 0;
 			ret = bpf_exec_tx_verdict(msg_pl, sk, full_record,
 						  record_type, &copied, flags);
 			if (ret) {
@@ -1188,13 +1185,11 @@ wait_for_sndbuf:
 wait_for_memory:
 		ret = sk_stream_wait_memory(sk, &timeo);
 		if (ret) {
-			if (ctx->open_rec)
-				tls_trim_both_msgs(sk, msg_pl->sg.size);
+			tls_trim_both_msgs(sk, msg_pl->sg.size);
 			goto sendpage_end;
 		}
 
-		if (ctx->open_rec)
-			goto alloc_payload;
+		goto alloc_payload;
 	}
 
 	if (num_async) {
@@ -1215,7 +1210,7 @@ int tls_sw_sendpage_locked(struct sock *sk, struct page *page,
 	if (flags & ~(MSG_MORE | MSG_DONTWAIT | MSG_NOSIGNAL |
 		      MSG_SENDPAGE_NOTLAST | MSG_SENDPAGE_NOPOLICY |
 		      MSG_NO_SHARED_FRAGS))
-		return -EOPNOTSUPP;
+		return -ENOTSUPP;
 
 	return tls_sw_do_sendpage(sk, page, offset, size, flags);
 }
@@ -1228,7 +1223,7 @@ int tls_sw_sendpage(struct sock *sk, struct page *page,
 
 	if (flags & ~(MSG_MORE | MSG_DONTWAIT | MSG_NOSIGNAL |
 		      MSG_SENDPAGE_NOTLAST | MSG_SENDPAGE_NOPOLICY))
-		return -EOPNOTSUPP;
+		return -ENOTSUPP;
 
 	mutex_lock(&tls_ctx->tx_lock);
 	lock_sock(sk);
@@ -1496,13 +1491,12 @@ static int decrypt_skb_update(struct sock *sk, struct sk_buff *skb,
 	int pad, err = 0;
 
 	if (!ctx->decrypted) {
-#ifdef CONFIG_TLS_DEVICE
 		if (tls_ctx->rx_conf == TLS_HW) {
 			err = tls_device_decrypted(sk, skb);
 			if (err < 0)
 				return err;
 		}
-#endif
+
 		/* Still not decrypted after tls_device */
 		if (!ctx->decrypted) {
 			err = decrypt_internal(sk, skb, dest, NULL, chunk, zc,
@@ -1928,7 +1922,7 @@ ssize_t tls_sw_splice_read(struct socket *sock,  loff_t *ppos,
 
 		/* splice does not support reading control messages */
 		if (ctx->control != TLS_RECORD_TYPE_DATA) {
-			err = -EINVAL;
+			err = -ENOTSUPP;
 			goto splice_read_end;
 		}
 
@@ -2021,10 +2015,9 @@ static int tls_read_size(struct strparser *strp, struct sk_buff *skb)
 		ret = -EINVAL;
 		goto read_failure;
 	}
-#ifdef CONFIG_TLS_DEVICE
+
 	tls_device_rx_resync_new_rec(strp->sk, data_len + TLS_HEADER_SIZE,
 				     TCP_SKB_CB(skb)->seq + rxm->offset);
-#endif
 	return data_len + TLS_HEADER_SIZE;
 
 read_failure:
@@ -2086,8 +2079,7 @@ void tls_sw_release_resources_tx(struct sock *sk)
 	/* Free up un-sent records in tx_list. First, free
 	 * the partially sent record if any at head of tx_list.
 	 */
-	if (tls_ctx->partially_sent_record) {
-		tls_free_partial_record(sk, tls_ctx);
+	if (tls_free_partial_record(sk, tls_ctx)) {
 		rec = list_first_entry(&ctx->tx_list,
 				       struct tls_rec, list);
 		list_del(&rec->list);

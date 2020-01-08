@@ -21,7 +21,6 @@
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
-#include <linux/string.h>
 #include <linux/usb/of.h>
 #include <linux/workqueue.h>
 
@@ -321,9 +320,9 @@ static ssize_t role_store(struct device *dev, struct device_attribute *attr,
 	if (!ch->is_otg_channel || !rcar_gen3_is_any_rphy_initialized(ch))
 		return -EIO;
 
-	if (sysfs_streq(buf, "host"))
+	if (!strncmp(buf, "host", strlen("host")))
 		new_mode = PHY_MODE_USB_HOST;
-	else if (sysfs_streq(buf, "peripheral"))
+	else if (!strncmp(buf, "peripheral", strlen("peripheral")))
 		new_mode = PHY_MODE_USB_DEVICE;
 	else
 		return -EINVAL;

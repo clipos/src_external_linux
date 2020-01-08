@@ -11,7 +11,6 @@
  */
 
 #include <asm/ppc_asm.h>
-#include <asm/code-patching-asm.h>
 #include <asm/kvm_asm.h>
 #include <asm/reg.h>
 #include <asm/mmu.h>
@@ -30,6 +29,7 @@
 #include <asm/asm-compat.h>
 #include <asm/feature-fixups.h>
 #include <asm/cpuidle.h>
+#include <asm/ultravisor-api.h>
 
 /* Sign-extend HDEC if not on POWER9 */
 #define EXTEND_HDEC(reg)			\
@@ -644,8 +644,10 @@ END_FTR_SECTION_IFCLR(CPU_FTR_ARCH_300)
 
 	/* Load guest PCR value to select appropriate compat mode */
 37:	ld	r7, VCORE_PCR(r5)
-	cmpdi	r7, 0
+	LOAD_REG_IMMEDIATE(r6, PCR_MASK)
+	cmpld	r7, r6
 	beq	38f
+	or	r7, r7, r6
 	mtspr	SPRN_PCR, r7
 38:
 
@@ -1086,16 +1088,10 @@ BEGIN_FTR_SECTION
 END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 
 	ld	r5, VCPU_LR(r4)
-	ld	r6, VCPU_CR(r4)
 	mtlr	r5
-	mtcr	r6
 
 	ld	r1, VCPU_GPR(R1)(r4)
-	ld	r2, VCPU_GPR(R2)(r4)
-	ld	r3, VCPU_GPR(R3)(r4)
 	ld	r5, VCPU_GPR(R5)(r4)
-	ld	r6, VCPU_GPR(R6)(r4)
-	ld	r7, VCPU_GPR(R7)(r4)
 	ld	r8, VCPU_GPR(R8)(r4)
 	ld	r9, VCPU_GPR(R9)(r4)
 	ld	r10, VCPU_GPR(R10)(r4)
@@ -1113,10 +1109,42 @@ BEGIN_FTR_SECTION
 	mtspr	SPRN_HDSISR, r0
 END_FTR_SECTION_IFSET(CPU_FTR_ARCH_300)
 
+	ld	r6, VCPU_KVM(r4)
+	lbz	r7, KVM_SECURE_GUEST(r6)
+	cmpdi	r7, 0
+	ld	r6, VCPU_GPR(R6)(r4)
+	ld	r7, VCPU_GPR(R7)(r4)
+	bne	ret_to_ultra
+
+	lwz	r0, VCPU_CR(r4)
+	mtcr	r0
+
 	ld	r0, VCPU_GPR(R0)(r4)
+	ld	r2, VCPU_GPR(R2)(r4)
+	ld	r3, VCPU_GPR(R3)(r4)
 	ld	r4, VCPU_GPR(R4)(r4)
 	HRFI_TO_GUEST
 	b	.
+/*
+ * Use UV_RETURN ultracall to return control back to the Ultravisor after
+ * processing an hypercall or interrupt that was forwarded (a.k.a. reflected)
+ * to the Hypervisor.
+ *
+ * All registers have already been loaded, except:
+ *   R0 = hcall result
+ *   R2 = SRR1, so UV can detect a synthesized interrupt (if any)
+ *   R3 = UV_RETURN
+ */
+ret_to_ultra:
+	lwz	r0, VCPU_CR(r4)
+	mtcr	r0
+
+	ld	r0, VCPU_GPR(R3)(r4)
+	mfspr	r2, SPRN_SRR1
+	li	r3, 0
+	ori	r3, r3, UV_RETURN
+	ld	r4, VCPU_GPR(R4)(r4)
+	sc	2
 
 /*
  * Enter the guest on a P9 or later system where we have exactly
@@ -1458,13 +1486,6 @@ guest_exit_cont:		/* r9 = vcpu, r12 = trap, r13 = paca */
 	eieio
 1:
 #endif /* CONFIG_KVM_XICS */
-
-	/*
-	 * Possibly flush the link stack here, before we do a blr in
-	 * guest_exit_short_path.
-	 */
-1:	nop
-	patch_site 1b patch__call_kvm_flush_link_stack
 
 	/* If we came in through the P9 short path, go back out to C now */
 	lwz	r0, STACK_SLOT_SHORT_PATH(r1)
@@ -1894,12 +1915,13 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
 
 	/* Reset PCR */
 	ld	r0, VCORE_PCR(r5)
-	cmpdi	r0, 0
+	LOAD_REG_IMMEDIATE(r6, PCR_MASK)
+	cmpld	r0, r6
 	beq	18f
-	li	r0, 0
-	mtspr	SPRN_PCR, r0
+	mtspr	SPRN_PCR, r6
 18:
 	/* Signal secondary CPUs to continue */
+	li	r0, 0
 	stb	r0,VCORE_IN_GUEST(r5)
 19:	lis	r8,0x7fff		/* MAX_INT@h */
 	mtspr	SPRN_HDEC,r8
@@ -1938,28 +1960,6 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_300)
 	lwz	r12, STACK_SLOT_TRAP(r1)	/* return trap # in r12 */
 	ld	r0, SFS+PPC_LR_STKOFF(r1)
 	addi	r1, r1, SFS
-	mtlr	r0
-	blr
-
-.balign 32
-.global kvm_flush_link_stack
-kvm_flush_link_stack:
-	/* Save LR into r0 */
-	mflr	r0
-
-	/* Flush the link stack. On Power8 it's up to 32 entries in size. */
-	.rept 32
-	bl	.+4
-	.endr
-
-	/* And on Power9 it's up to 64. */
-BEGIN_FTR_SECTION
-	.rept 32
-	bl	.+4
-	.endr
-END_FTR_SECTION_IFSET(CPU_FTR_ARCH_300)
-
-	/* Restore LR */
 	mtlr	r0
 	blr
 
