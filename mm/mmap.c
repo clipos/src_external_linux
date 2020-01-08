@@ -201,6 +201,8 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
 	bool downgraded = false;
 	LIST_HEAD(uf);
 
+	brk = untagged_addr(brk);
+
 	if (down_write_killable(&mm->mmap_sem))
 		return -EINTR;
 
@@ -296,9 +298,9 @@ out:
 	return retval;
 }
 
-static long vma_compute_subtree_gap(struct vm_area_struct *vma)
+static inline unsigned long vma_compute_gap(struct vm_area_struct *vma)
 {
-	unsigned long max, prev_end, subtree_gap;
+	unsigned long gap, prev_end;
 
 	/*
 	 * Note: in the rare case of a VM_GROWSDOWN above a VM_GROWSUP, we
@@ -306,14 +308,21 @@ static long vma_compute_subtree_gap(struct vm_area_struct *vma)
 	 * an unmapped area; whereas when expanding we only require one.
 	 * That's a little inconsistent, but keeps the code here simpler.
 	 */
-	max = vm_start_gap(vma);
+	gap = vm_start_gap(vma);
 	if (vma->vm_prev) {
 		prev_end = vm_end_gap(vma->vm_prev);
-		if (max > prev_end)
-			max -= prev_end;
+		if (gap > prev_end)
+			gap -= prev_end;
 		else
-			max = 0;
+			gap = 0;
 	}
+	return gap;
+}
+
+#ifdef CONFIG_DEBUG_VM_RB
+static unsigned long vma_compute_subtree_gap(struct vm_area_struct *vma)
+{
+	unsigned long max = vma_compute_gap(vma), subtree_gap;
 	if (vma->vm_rb.rb_left) {
 		subtree_gap = rb_entry(vma->vm_rb.rb_left,
 				struct vm_area_struct, vm_rb)->rb_subtree_gap;
@@ -329,7 +338,6 @@ static long vma_compute_subtree_gap(struct vm_area_struct *vma)
 	return max;
 }
 
-#ifdef CONFIG_DEBUG_VM_RB
 static int browse_rb(struct mm_struct *mm)
 {
 	struct rb_root *root = &mm->mm_rb;
@@ -435,8 +443,9 @@ static void validate_mm(struct mm_struct *mm)
 #define validate_mm(mm) do { } while (0)
 #endif
 
-RB_DECLARE_CALLBACKS(static, vma_gap_callbacks, struct vm_area_struct, vm_rb,
-		     unsigned long, rb_subtree_gap, vma_compute_subtree_gap)
+RB_DECLARE_CALLBACKS_MAX(static, vma_gap_callbacks,
+			 struct vm_area_struct, vm_rb,
+			 unsigned long, rb_subtree_gap, vma_compute_gap)
 
 /*
  * Update augmented rbtree rb_subtree_gap values after vma->vm_start or
@@ -446,8 +455,8 @@ RB_DECLARE_CALLBACKS(static, vma_gap_callbacks, struct vm_area_struct, vm_rb,
 static void vma_gap_update(struct vm_area_struct *vma)
 {
 	/*
-	 * As it turns out, RB_DECLARE_CALLBACKS() already created a callback
-	 * function that does exactly what we want.
+	 * As it turns out, RB_DECLARE_CALLBACKS_MAX() already created
+	 * a callback function that does exactly what we want.
 	 */
 	vma_gap_callbacks_propagate(&vma->vm_rb, NULL);
 }
@@ -1365,6 +1374,9 @@ static inline u64 file_mmap_size_max(struct file *file, struct inode *inode)
 	if (S_ISBLK(inode->i_mode))
 		return MAX_LFS_FILESIZE;
 
+	if (S_ISSOCK(inode->i_mode))
+		return MAX_LFS_FILESIZE;
+
 	/* Special "we do even unsigned file positions" case */
 	if (file->f_mode & FMODE_UNSIGNED_OFFSET)
 		return 0;
@@ -1490,8 +1502,12 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 		case MAP_SHARED_VALIDATE:
 			if (flags & ~flags_mask)
 				return -EOPNOTSUPP;
-			if ((prot&PROT_WRITE) && !(file->f_mode&FMODE_WRITE))
-				return -EACCES;
+			if (prot & PROT_WRITE) {
+				if (!(file->f_mode & FMODE_WRITE))
+					return -EACCES;
+				if (IS_SWAPFILE(file->f_mapping->host))
+					return -ETXTBSY;
+			}
 
 			/*
 			 * Make sure we don't allow writing to an append-only
@@ -1579,6 +1595,8 @@ unsigned long ksys_mmap_pgoff(unsigned long addr, unsigned long len,
 {
 	struct file *file = NULL;
 	unsigned long retval;
+
+	addr = untagged_addr(addr);
 
 	if (!(flags & MAP_ANONYMOUS)) {
 		audit_mmap_fd(fd, flags);
@@ -2277,12 +2295,9 @@ find_vma_prev(struct mm_struct *mm, unsigned long addr,
 	if (vma) {
 		*pprev = vma->vm_prev;
 	} else {
-		struct rb_node *rb_node = mm->mm_rb.rb_node;
-		*pprev = NULL;
-		while (rb_node) {
-			*pprev = rb_entry(rb_node, struct vm_area_struct, vm_rb);
-			rb_node = rb_node->rb_right;
-		}
+		struct rb_node *rb_node = rb_last(&mm->mm_rb);
+
+		*pprev = rb_node ? rb_entry(rb_node, struct vm_area_struct, vm_rb) : NULL;
 	}
 	return vma;
 }
@@ -2881,6 +2896,7 @@ EXPORT_SYMBOL(vm_munmap);
 
 SYSCALL_DEFINE2(munmap, unsigned long, addr, size_t, len)
 {
+	addr = untagged_addr(addr);
 	profile_munmap(addr);
 	return __vm_munmap(addr, len, true);
 }
