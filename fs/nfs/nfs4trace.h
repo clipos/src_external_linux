@@ -352,7 +352,7 @@ DECLARE_EVENT_CLASS(nfs4_clientid_event,
 		),
 
 		TP_fast_assign(
-			__entry->error = error < 0 ? -error : 0;
+			__entry->error = error;
 			__assign_str(dstaddr, clp->cl_hostname);
 		),
 
@@ -432,8 +432,7 @@ TRACE_EVENT(nfs4_sequence_done,
 			__entry->target_highest_slotid =
 					res->sr_target_highest_slotid;
 			__entry->status_flags = res->sr_status_flags;
-			__entry->error = res->sr_status < 0 ?
-					-res->sr_status : 0;
+			__entry->error = res->sr_status;
 		),
 		TP_printk(
 			"error=%ld (%s) session=0x%08x slot_nr=%u seq_nr=%u "
@@ -563,11 +562,104 @@ TRACE_EVENT(nfs4_setup_sequence,
 		)
 );
 
+TRACE_DEFINE_ENUM(NFS4CLNT_MANAGER_RUNNING);
+TRACE_DEFINE_ENUM(NFS4CLNT_CHECK_LEASE);
+TRACE_DEFINE_ENUM(NFS4CLNT_LEASE_EXPIRED);
+TRACE_DEFINE_ENUM(NFS4CLNT_RECLAIM_REBOOT);
+TRACE_DEFINE_ENUM(NFS4CLNT_RECLAIM_NOGRACE);
+TRACE_DEFINE_ENUM(NFS4CLNT_DELEGRETURN);
+TRACE_DEFINE_ENUM(NFS4CLNT_SESSION_RESET);
+TRACE_DEFINE_ENUM(NFS4CLNT_LEASE_CONFIRM);
+TRACE_DEFINE_ENUM(NFS4CLNT_SERVER_SCOPE_MISMATCH);
+TRACE_DEFINE_ENUM(NFS4CLNT_PURGE_STATE);
+TRACE_DEFINE_ENUM(NFS4CLNT_BIND_CONN_TO_SESSION);
+TRACE_DEFINE_ENUM(NFS4CLNT_MOVED);
+TRACE_DEFINE_ENUM(NFS4CLNT_LEASE_MOVED);
+TRACE_DEFINE_ENUM(NFS4CLNT_DELEGATION_EXPIRED);
+TRACE_DEFINE_ENUM(NFS4CLNT_RUN_MANAGER);
+TRACE_DEFINE_ENUM(NFS4CLNT_DELEGRETURN_RUNNING);
+
+#define show_nfs4_clp_state(state) \
+	__print_flags(state, "|", \
+		{ NFS4CLNT_MANAGER_RUNNING,	"MANAGER_RUNNING" }, \
+		{ NFS4CLNT_CHECK_LEASE,		"CHECK_LEASE" }, \
+		{ NFS4CLNT_LEASE_EXPIRED,	"LEASE_EXPIRED" }, \
+		{ NFS4CLNT_RECLAIM_REBOOT,	"RECLAIM_REBOOT" }, \
+		{ NFS4CLNT_RECLAIM_NOGRACE,	"RECLAIM_NOGRACE" }, \
+		{ NFS4CLNT_DELEGRETURN,		"DELEGRETURN" }, \
+		{ NFS4CLNT_SESSION_RESET,	"SESSION_RESET" }, \
+		{ NFS4CLNT_LEASE_CONFIRM,	"LEASE_CONFIRM" }, \
+		{ NFS4CLNT_SERVER_SCOPE_MISMATCH, \
+						"SERVER_SCOPE_MISMATCH" }, \
+		{ NFS4CLNT_PURGE_STATE,		"PURGE_STATE" }, \
+		{ NFS4CLNT_BIND_CONN_TO_SESSION, \
+						"BIND_CONN_TO_SESSION" }, \
+		{ NFS4CLNT_MOVED,		"MOVED" }, \
+		{ NFS4CLNT_LEASE_MOVED,		"LEASE_MOVED" }, \
+		{ NFS4CLNT_DELEGATION_EXPIRED,	"DELEGATION_EXPIRED" }, \
+		{ NFS4CLNT_RUN_MANAGER,		"RUN_MANAGER" }, \
+		{ NFS4CLNT_DELEGRETURN_RUNNING,	"DELEGRETURN_RUNNING" })
+
+TRACE_EVENT(nfs4_state_mgr,
+		TP_PROTO(
+			const struct nfs_client *clp
+		),
+
+		TP_ARGS(clp),
+
+		TP_STRUCT__entry(
+			__field(unsigned long, state)
+			__string(hostname, clp->cl_hostname)
+		),
+
+		TP_fast_assign(
+			__entry->state = clp->cl_state;
+			__assign_str(hostname, clp->cl_hostname)
+		),
+
+		TP_printk(
+			"hostname=%s clp state=%s", __get_str(hostname),
+			show_nfs4_clp_state(__entry->state)
+		)
+)
+
+TRACE_EVENT(nfs4_state_mgr_failed,
+		TP_PROTO(
+			const struct nfs_client *clp,
+			const char *section,
+			int status
+		),
+
+		TP_ARGS(clp, section, status),
+
+		TP_STRUCT__entry(
+			__field(unsigned long, error)
+			__field(unsigned long, state)
+			__string(hostname, clp->cl_hostname)
+			__string(section, section)
+		),
+
+		TP_fast_assign(
+			__entry->error = status;
+			__entry->state = clp->cl_state;
+			__assign_str(hostname, clp->cl_hostname);
+			__assign_str(section, section);
+		),
+
+		TP_printk(
+			"hostname=%s clp state=%s error=%ld (%s) section=%s",
+			__get_str(hostname),
+			show_nfs4_clp_state(__entry->state), -__entry->error,
+			show_nfsv4_errors(__entry->error), __get_str(section)
+
+		)
+)
+
 TRACE_EVENT(nfs4_xdr_status,
 		TP_PROTO(
 			const struct xdr_stream *xdr,
 			u32 op,
-			u32 error
+			int error
 		),
 
 		TP_ARGS(xdr, op, error),
@@ -757,7 +849,7 @@ TRACE_EVENT(nfs4_close,
 			__entry->fileid = NFS_FILEID(inode);
 			__entry->fhandle = nfs_fhandle_hash(NFS_FH(inode));
 			__entry->fmode = (__force unsigned int)state->state;
-			__entry->error = error < 0 ? -error : 0;
+			__entry->error = error;
 			__entry->stateid_seq =
 				be32_to_cpu(args->stateid.seqid);
 			__entry->stateid_hash =
@@ -822,7 +914,7 @@ DECLARE_EVENT_CLASS(nfs4_lock_event,
 		TP_fast_assign(
 			const struct inode *inode = state->inode;
 
-			__entry->error = error < 0 ? -error : 0;
+			__entry->error = error;
 			__entry->cmd = cmd;
 			__entry->type = request->fl_type;
 			__entry->start = request->fl_start;
@@ -894,7 +986,7 @@ TRACE_EVENT(nfs4_set_lock,
 		TP_fast_assign(
 			const struct inode *inode = state->inode;
 
-			__entry->error = error < 0 ? -error : 0;
+			__entry->error = error;
 			__entry->cmd = cmd;
 			__entry->type = request->fl_type;
 			__entry->start = request->fl_start;
@@ -929,6 +1021,88 @@ TRACE_EVENT(nfs4_set_lock,
 			__entry->lockstateid_seq, __entry->lockstateid_hash
 		)
 );
+
+TRACE_DEFINE_ENUM(LK_STATE_IN_USE);
+TRACE_DEFINE_ENUM(NFS_DELEGATED_STATE);
+TRACE_DEFINE_ENUM(NFS_OPEN_STATE);
+TRACE_DEFINE_ENUM(NFS_O_RDONLY_STATE);
+TRACE_DEFINE_ENUM(NFS_O_WRONLY_STATE);
+TRACE_DEFINE_ENUM(NFS_O_RDWR_STATE);
+TRACE_DEFINE_ENUM(NFS_STATE_RECLAIM_REBOOT);
+TRACE_DEFINE_ENUM(NFS_STATE_RECLAIM_NOGRACE);
+TRACE_DEFINE_ENUM(NFS_STATE_POSIX_LOCKS);
+TRACE_DEFINE_ENUM(NFS_STATE_RECOVERY_FAILED);
+TRACE_DEFINE_ENUM(NFS_STATE_MAY_NOTIFY_LOCK);
+TRACE_DEFINE_ENUM(NFS_STATE_CHANGE_WAIT);
+TRACE_DEFINE_ENUM(NFS_CLNT_DST_SSC_COPY_STATE);
+TRACE_DEFINE_ENUM(NFS_CLNT_SRC_SSC_COPY_STATE);
+TRACE_DEFINE_ENUM(NFS_SRV_SSC_COPY_STATE);
+
+#define show_nfs4_state_flags(flags) \
+	__print_flags(flags, "|", \
+		{ LK_STATE_IN_USE,		"IN_USE" }, \
+		{ NFS_DELEGATED_STATE,		"DELEGATED" }, \
+		{ NFS_OPEN_STATE,		"OPEN" }, \
+		{ NFS_O_RDONLY_STATE,		"O_RDONLY" }, \
+		{ NFS_O_WRONLY_STATE,		"O_WRONLY" }, \
+		{ NFS_O_RDWR_STATE,		"O_RDWR" }, \
+		{ NFS_STATE_RECLAIM_REBOOT,	"RECLAIM_REBOOT" }, \
+		{ NFS_STATE_RECLAIM_NOGRACE,	"RECLAIM_NOGRACE" }, \
+		{ NFS_STATE_POSIX_LOCKS,	"POSIX_LOCKS" }, \
+		{ NFS_STATE_RECOVERY_FAILED,	"RECOVERY_FAILED" }, \
+		{ NFS_STATE_MAY_NOTIFY_LOCK,	"MAY_NOTIFY_LOCK" }, \
+		{ NFS_STATE_CHANGE_WAIT,	"CHANGE_WAIT" }, \
+		{ NFS_CLNT_DST_SSC_COPY_STATE,	"CLNT_DST_SSC_COPY" }, \
+		{ NFS_CLNT_SRC_SSC_COPY_STATE,	"CLNT_SRC_SSC_COPY" }, \
+		{ NFS_SRV_SSC_COPY_STATE,	"SRV_SSC_COPY" })
+
+#define show_nfs4_lock_flags(flags) \
+	__print_flags(flags, "|", \
+		{ BIT(NFS_LOCK_INITIALIZED),	"INITIALIZED" }, \
+		{ BIT(NFS_LOCK_LOST),		"LOST" })
+
+TRACE_EVENT(nfs4_state_lock_reclaim,
+		TP_PROTO(
+			const struct nfs4_state *state,
+			const struct nfs4_lock_state *lock
+		),
+
+		TP_ARGS(state, lock),
+
+		TP_STRUCT__entry(
+			__field(dev_t, dev)
+			__field(u32, fhandle)
+			__field(u64, fileid)
+			__field(unsigned long, state_flags)
+			__field(unsigned long, lock_flags)
+			__field(int, stateid_seq)
+			__field(u32, stateid_hash)
+		),
+
+		TP_fast_assign(
+			const struct inode *inode = state->inode;
+
+			__entry->dev = inode->i_sb->s_dev;
+			__entry->fileid = NFS_FILEID(inode);
+			__entry->fhandle = nfs_fhandle_hash(NFS_FH(inode));
+			__entry->state_flags = state->flags;
+			__entry->lock_flags = lock->ls_flags;
+			__entry->stateid_seq =
+				be32_to_cpu(state->stateid.seqid);
+			__entry->stateid_hash =
+				nfs_stateid_hash(&state->stateid);
+		),
+
+		TP_printk(
+			"fileid=%02x:%02x:%llu fhandle=0x%08x "
+			"stateid=%d:0x%08x state_flags=%s lock_flags=%s",
+			MAJOR(__entry->dev), MINOR(__entry->dev),
+			(unsigned long long)__entry->fileid, __entry->fhandle,
+			__entry->stateid_seq, __entry->stateid_hash,
+			show_nfs4_state_flags(__entry->state_flags),
+			show_nfs4_lock_flags(__entry->lock_flags)
+		)
+)
 
 DECLARE_EVENT_CLASS(nfs4_set_delegation_event,
 		TP_PROTO(
@@ -990,7 +1164,7 @@ TRACE_EVENT(nfs4_delegreturn_exit,
 		TP_fast_assign(
 			__entry->dev = res->server->s_dev;
 			__entry->fhandle = nfs_fhandle_hash(args->fhandle);
-			__entry->error = error < 0 ? -error : 0;
+			__entry->error = error;
 			__entry->stateid_seq =
 				be32_to_cpu(args->stateid->seqid);
 			__entry->stateid_hash =
@@ -1030,7 +1204,7 @@ DECLARE_EVENT_CLASS(nfs4_test_stateid_event,
 		TP_fast_assign(
 			const struct inode *inode = state->inode;
 
-			__entry->error = error < 0 ? -error : 0;
+			__entry->error = error;
 			__entry->dev = inode->i_sb->s_dev;
 			__entry->fileid = NFS_FILEID(inode);
 			__entry->fhandle = nfs_fhandle_hash(NFS_FH(inode));
@@ -1132,7 +1306,7 @@ TRACE_EVENT(nfs4_lookupp,
 		TP_fast_assign(
 			__entry->dev = inode->i_sb->s_dev;
 			__entry->ino = NFS_FILEID(inode);
-			__entry->error = error < 0 ? -error : 0;
+			__entry->error = error;
 		),
 
 		TP_printk(
@@ -1168,7 +1342,7 @@ TRACE_EVENT(nfs4_rename,
 			__entry->dev = olddir->i_sb->s_dev;
 			__entry->olddir = NFS_FILEID(olddir);
 			__entry->newdir = NFS_FILEID(newdir);
-			__entry->error = error < 0 ? -error : 0;
+			__entry->error = error;
 			__assign_str(oldname, oldname->name);
 			__assign_str(newname, newname->name);
 		),
@@ -1259,7 +1433,7 @@ DECLARE_EVENT_CLASS(nfs4_inode_stateid_event,
 			__entry->dev = inode->i_sb->s_dev;
 			__entry->fileid = NFS_FILEID(inode);
 			__entry->fhandle = nfs_fhandle_hash(NFS_FH(inode));
-			__entry->error = error < 0 ? -error : 0;
+			__entry->error = error;
 			__entry->stateid_seq =
 				be32_to_cpu(stateid->seqid);
 			__entry->stateid_hash =
@@ -1315,7 +1489,7 @@ DECLARE_EVENT_CLASS(nfs4_getattr_event,
 			__entry->valid = fattr->valid;
 			__entry->fhandle = nfs_fhandle_hash(fhandle);
 			__entry->fileid = (fattr->valid & NFS_ATTR_FATTR_FILEID) ? fattr->fileid : 0;
-			__entry->error = error < 0 ? -error : 0;
+			__entry->error = error;
 		),
 
 		TP_printk(
@@ -1362,7 +1536,7 @@ DECLARE_EVENT_CLASS(nfs4_inode_callback_event,
 		),
 
 		TP_fast_assign(
-			__entry->error = error < 0 ? -error : 0;
+			__entry->error = error;
 			__entry->fhandle = nfs_fhandle_hash(fhandle);
 			if (!IS_ERR_OR_NULL(inode)) {
 				__entry->fileid = NFS_FILEID(inode);
@@ -1419,7 +1593,7 @@ DECLARE_EVENT_CLASS(nfs4_inode_stateid_callback_event,
 		),
 
 		TP_fast_assign(
-			__entry->error = error < 0 ? -error : 0;
+			__entry->error = error;
 			__entry->fhandle = nfs_fhandle_hash(fhandle);
 			if (!IS_ERR_OR_NULL(inode)) {
 				__entry->fileid = NFS_FILEID(inode);
@@ -1722,7 +1896,7 @@ TRACE_EVENT(nfs4_layoutget,
 			__entry->iomode = args->iomode;
 			__entry->offset = args->offset;
 			__entry->count = args->length;
-			__entry->error = error < 0 ? -error : 0;
+			__entry->error = error;
 			__entry->stateid_seq =
 				be32_to_cpu(state->stateid.seqid);
 			__entry->stateid_hash =

@@ -109,13 +109,9 @@ int bch_cache_accounting_add_kobjs(struct cache_accounting *acc,
 
 void bch_cache_accounting_clear(struct cache_accounting *acc)
 {
-	acc->total.cache_hits = 0;
-	acc->total.cache_misses = 0;
-	acc->total.cache_bypass_hits = 0;
-	acc->total.cache_bypass_misses = 0;
-	acc->total.cache_readaheads = 0;
-	acc->total.cache_miss_collisions = 0;
-	acc->total.sectors_bypassed = 0;
+	memset(&acc->total.cache_hits,
+	       0,
+	       sizeof(struct cache_stats));
 }
 
 void bch_cache_accounting_destroy(struct cache_accounting *acc)

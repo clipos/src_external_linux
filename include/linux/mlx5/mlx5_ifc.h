@@ -1110,6 +1110,7 @@ enum {
 };
 
 enum {
+	MLX5_FLEX_PARSER_GENEVE_ENABLED		= 1 << 3,
 	MLX5_FLEX_PARSER_VXLAN_GPE_ENABLED	= 1 << 7,
 	MLX5_FLEX_PARSER_ICMP_V4_ENABLED	= 1 << 8,
 	MLX5_FLEX_PARSER_ICMP_V6_ENABLED	= 1 << 9,
@@ -1153,7 +1154,7 @@ struct mlx5_ifc_cmd_hca_cap_bits {
 	u8         log_max_srq[0x5];
 	u8         reserved_at_b0[0x10];
 
-	u8         reserved_at_c0[0x8];
+	u8         max_sgl_for_optimized_performance[0x8];
 	u8         log_max_cq_sz[0x8];
 	u8         reserved_at_d0[0xb];
 	u8         log_max_cq[0x5];
@@ -1417,15 +1418,14 @@ struct mlx5_ifc_cmd_hca_cap_bits {
 
 	u8         reserved_at_440[0x20];
 
-	u8         reserved_at_460[0x3];
+	u8         tls[0x1];
+	u8         reserved_at_461[0x2];
 	u8         log_max_uctx[0x5];
 	u8         reserved_at_468[0x3];
 	u8         log_max_umem[0x5];
 	u8         max_num_eqs[0x10];
 
-	u8         reserved_at_480[0x1];
-	u8         tls_tx[0x1];
-	u8         reserved_at_482[0x1];
+	u8         reserved_at_480[0x3];
 	u8         log_max_l2_table[0x5];
 	u8         reserved_at_488[0x8];
 	u8         log_uar_page_sz[0x10];

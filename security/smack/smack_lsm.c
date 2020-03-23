@@ -28,7 +28,6 @@
 #include <linux/icmpv6.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
-#include <linux/pipe_fs_i.h>
 #include <net/cipso_ipv4.h>
 #include <net/ip.h>
 #include <net/ipv6.h>
@@ -2832,39 +2831,42 @@ static int smack_socket_connect(struct socket *sock, struct sockaddr *sap,
 				int addrlen)
 {
 	int rc = 0;
+#if IS_ENABLED(CONFIG_IPV6)
+	struct sockaddr_in6 *sip = (struct sockaddr_in6 *)sap;
+#endif
+#ifdef SMACK_IPV6_SECMARK_LABELING
+	struct smack_known *rsp;
+	struct socket_smack *ssp;
+#endif
 
 	if (sock->sk == NULL)
 		return 0;
-	if (sock->sk->sk_family != PF_INET &&
-	    (!IS_ENABLED(CONFIG_IPV6) || sock->sk->sk_family != PF_INET6))
-		return 0;
-	if (addrlen < offsetofend(struct sockaddr, sa_family))
-		return 0;
-	if (IS_ENABLED(CONFIG_IPV6) && sap->sa_family == AF_INET6) {
-		struct sockaddr_in6 *sip = (struct sockaddr_in6 *)sap;
+
 #ifdef SMACK_IPV6_SECMARK_LABELING
-		struct smack_known *rsp;
+	ssp = sock->sk->sk_security;
 #endif
 
-		if (addrlen < SIN6_LEN_RFC2133)
-			return 0;
+	switch (sock->sk->sk_family) {
+	case PF_INET:
+		if (addrlen < sizeof(struct sockaddr_in) ||
+		    sap->sa_family != AF_INET)
+			return -EINVAL;
+		rc = smack_netlabel_send(sock->sk, (struct sockaddr_in *)sap);
+		break;
+	case PF_INET6:
+		if (addrlen < SIN6_LEN_RFC2133 || sap->sa_family != AF_INET6)
+			return -EINVAL;
 #ifdef SMACK_IPV6_SECMARK_LABELING
 		rsp = smack_ipv6host_label(sip);
-		if (rsp != NULL) {
-			struct socket_smack *ssp = sock->sk->sk_security;
-
+		if (rsp != NULL)
 			rc = smk_ipv6_check(ssp->smk_out, rsp, sip,
-					    SMK_CONNECTING);
-		}
+						SMK_CONNECTING);
 #endif
 #ifdef SMACK_IPV6_PORT_LABELING
 		rc = smk_ipv6_port_check(sock->sk, sip, SMK_CONNECTING);
 #endif
-		return rc;
+		break;
 	}
-	if (sap->sa_family != AF_INET || addrlen < sizeof(struct sockaddr_in))
-		return 0;
-	rc = smack_netlabel_send(sock->sk, (struct sockaddr_in *)sap);
 	return rc;
 }
 

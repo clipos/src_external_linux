@@ -121,6 +121,7 @@ struct btrfs_fs_info *btrfs_alloc_dummy_fs_info(u32 nodesize, u32 sectorsize)
 	spin_lock_init(&fs_info->qgroup_lock);
 	spin_lock_init(&fs_info->super_lock);
 	spin_lock_init(&fs_info->fs_roots_radix_lock);
+	spin_lock_init(&fs_info->tree_mod_seq_lock);
 	mutex_init(&fs_info->qgroup_ioctl_lock);
 	mutex_init(&fs_info->qgroup_rescan_lock);
 	rwlock_init(&fs_info->tree_mod_log_lock);
@@ -201,11 +202,11 @@ void btrfs_free_dummy_root(struct btrfs_root *root)
 	kfree(root);
 }
 
-struct btrfs_block_group_cache *
+struct btrfs_block_group *
 btrfs_alloc_dummy_block_group(struct btrfs_fs_info *fs_info,
 			      unsigned long length)
 {
-	struct btrfs_block_group_cache *cache;
+	struct btrfs_block_group *cache;
 
 	cache = kzalloc(sizeof(*cache), GFP_KERNEL);
 	if (!cache)
@@ -217,9 +218,8 @@ btrfs_alloc_dummy_block_group(struct btrfs_fs_info *fs_info,
 		return NULL;
 	}
 
-	cache->key.objectid = 0;
-	cache->key.offset = length;
-	cache->key.type = BTRFS_BLOCK_GROUP_ITEM_KEY;
+	cache->start = 0;
+	cache->length = length;
 	cache->full_stripe_len = fs_info->sectorsize;
 	cache->fs_info = fs_info;
 
@@ -232,7 +232,7 @@ btrfs_alloc_dummy_block_group(struct btrfs_fs_info *fs_info,
 	return cache;
 }
 
-void btrfs_free_dummy_block_group(struct btrfs_block_group_cache *cache)
+void btrfs_free_dummy_block_group(struct btrfs_block_group *cache)
 {
 	if (!cache)
 		return;

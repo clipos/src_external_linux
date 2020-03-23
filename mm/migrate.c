@@ -1168,13 +1168,9 @@ static ICE_noinline int unmap_and_move(new_page_t get_new_page,
 				   enum migrate_reason reason)
 {
 	int rc = MIGRATEPAGE_SUCCESS;
-	struct page *newpage;
+	struct page *newpage = NULL;
 
 	if (!thp_migration_supported() && PageTransHuge(page))
-		return -ENOMEM;
-
-	newpage = get_new_page(page, private);
-	if (!newpage)
 		return -ENOMEM;
 
 	if (page_count(page) == 1) {
@@ -1187,12 +1183,12 @@ static ICE_noinline int unmap_and_move(new_page_t get_new_page,
 				__ClearPageIsolated(page);
 			unlock_page(page);
 		}
-		if (put_new_page)
-			put_new_page(newpage, private);
-		else
-			put_page(newpage);
 		goto out;
 	}
+
+	newpage = get_new_page(page, private);
+	if (!newpage)
+		return -ENOMEM;
 
 	rc = __unmap_and_move(page, newpage, force, mode);
 	if (rc == MIGRATEPAGE_SUCCESS)
@@ -1631,19 +1627,8 @@ static int do_pages_move(struct mm_struct *mm, nodemask_t task_nodes,
 			start = i;
 		} else if (node != current_node) {
 			err = do_move_pages_to_node(mm, &pagelist, current_node);
-			if (err) {
-				/*
-				 * Positive err means the number of failed
-				 * pages to migrate.  Since we are going to
-				 * abort and return the number of non-migrated
-				 * pages, so need to incude the rest of the
-				 * nr_pages that have not been attempted as
-				 * well.
-				 */
-				if (err > 0)
-					err += nr_pages - i - 1;
+			if (err)
 				goto out;
-			}
 			err = store_status(status, start, current_node, i - start);
 			if (err)
 				goto out;
@@ -1674,11 +1659,8 @@ static int do_pages_move(struct mm_struct *mm, nodemask_t task_nodes,
 			goto out_flush;
 
 		err = do_move_pages_to_node(mm, &pagelist, current_node);
-		if (err) {
-			if (err > 0)
-				err += nr_pages - i - 1;
+		if (err)
 			goto out;
-		}
 		if (i > start) {
 			err = store_status(status, start, current_node, i - start);
 			if (err)
@@ -1692,16 +1674,9 @@ out_flush:
 
 	/* Make sure we do not overwrite the existing error */
 	err1 = do_move_pages_to_node(mm, &pagelist, current_node);
-	/*
-	 * Don't have to report non-attempted pages here since:
-	 *     - If the above loop is done gracefully all pages have been
-	 *       attempted.
-	 *     - If the above loop is aborted it means a fatal error
-	 *       happened, should return ret.
-	 */
 	if (!err1)
 		err1 = store_status(status, start, current_node, i - start);
-	if (err >= 0)
+	if (!err)
 		err = err1;
 out:
 	return err;
@@ -1895,7 +1870,7 @@ static bool migrate_balanced_pgdat(struct pglist_data *pgdat,
 		if (!zone_watermark_ok(zone, 0,
 				       high_wmark_pages(zone) +
 				       nr_migrate_pages,
-				       0, 0))
+				       ZONE_MOVABLE, 0))
 			continue;
 		return true;
 	}

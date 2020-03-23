@@ -702,7 +702,7 @@ static int snd_card_dummy_pcm(struct snd_dummy *dummy, int device,
 	if (!fake_buffer) {
 		snd_pcm_lib_preallocate_pages_for_all(pcm,
 			SNDRV_DMA_TYPE_CONTINUOUS,
-			snd_dma_continuous_data(GFP_KERNEL),
+			NULL,
 			0, 64*1024);
 	}
 	return 0;
@@ -915,7 +915,7 @@ static void print_formats(struct snd_dummy *dummy,
 {
 	int i;
 
-	for (i = 0; i <= SNDRV_PCM_FORMAT_LAST; i++) {
+	for (i = 0; i < SNDRV_PCM_FORMAT_LAST; i++) {
 		if (dummy->pcm_hw.formats & (1ULL << i))
 			snd_iprintf(buffer, " %s", snd_pcm_format_name(i));
 	}

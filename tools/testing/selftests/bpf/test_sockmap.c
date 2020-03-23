@@ -331,7 +331,7 @@ static int msg_loop_sendpage(int fd, int iov_length, int cnt,
 	FILE *file;
 	int i, fp;
 
-	file = tmpfile();
+	file = fopen(".sendpage_tst.tmp", "w+");
 	if (!file) {
 		perror("create file for sendpage");
 		return 1;
@@ -340,8 +340,13 @@ static int msg_loop_sendpage(int fd, int iov_length, int cnt,
 		fwrite(&k, sizeof(char), 1, file);
 	fflush(file);
 	fseek(file, 0, SEEK_SET);
+	fclose(file);
 
-	fp = fileno(file);
+	fp = open(".sendpage_tst.tmp", O_RDONLY);
+	if (fp < 0) {
+		perror("reopen file for sendpage");
+		return 1;
+	}
 
 	clock_gettime(CLOCK_MONOTONIC, &s->start);
 	for (i = 0; i < cnt; i++) {
@@ -349,11 +354,11 @@ static int msg_loop_sendpage(int fd, int iov_length, int cnt,
 
 		if (!drop && sent < 0) {
 			perror("send loop error");
-			fclose(file);
+			close(fp);
 			return sent;
 		} else if (drop && sent >= 0) {
 			printf("sendpage loop error expected: %i\n", sent);
-			fclose(file);
+			close(fp);
 			return -EIO;
 		}
 
@@ -361,7 +366,7 @@ static int msg_loop_sendpage(int fd, int iov_length, int cnt,
 			s->bytes_sent += sent;
 	}
 	clock_gettime(CLOCK_MONOTONIC, &s->end);
-	fclose(file);
+	close(fp);
 	return 0;
 }
 

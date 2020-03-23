@@ -1599,7 +1599,6 @@ out_free:
 	vfree(c->ileb_buf);
 	vfree(c->sbuf);
 	kfree(c->bottom_up_buf);
-	kfree(c->sup_node);
 	ubifs_debugging_exit(c);
 	return err;
 }
@@ -1642,7 +1641,6 @@ static void ubifs_umount(struct ubifs_info *c)
 	vfree(c->ileb_buf);
 	vfree(c->sbuf);
 	kfree(c->bottom_up_buf);
-	kfree(c->sup_node);
 	ubifs_debugging_exit(c);
 }
 

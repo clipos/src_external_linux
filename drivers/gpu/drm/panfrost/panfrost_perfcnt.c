@@ -73,7 +73,7 @@ static int panfrost_perfcnt_enable_locked(struct panfrost_device *pfdev,
 	struct panfrost_file_priv *user = file_priv->driver_priv;
 	struct panfrost_perfcnt *perfcnt = pfdev->perfcnt;
 	struct drm_gem_shmem_object *bo;
-	u32 cfg, as;
+	u32 cfg;
 	int ret;
 
 	if (user == perfcnt->user)
@@ -126,8 +126,12 @@ static int panfrost_perfcnt_enable_locked(struct panfrost_device *pfdev,
 
 	perfcnt->user = user;
 
-	as = panfrost_mmu_as_get(pfdev, perfcnt->mapping->mmu);
-	cfg = GPU_PERFCNT_CFG_AS(as) |
+	/*
+	 * Always use address space 0 for now.
+	 * FIXME: this needs to be updated when we start using different
+	 * address space.
+	 */
+	cfg = GPU_PERFCNT_CFG_AS(0) |
 	      GPU_PERFCNT_CFG_MODE(GPU_PERFCNT_CFG_MODE_MANUAL);
 
 	/*
@@ -191,7 +195,6 @@ static int panfrost_perfcnt_disable_locked(struct panfrost_device *pfdev,
 	drm_gem_shmem_vunmap(&perfcnt->mapping->obj->base.base, perfcnt->buf);
 	perfcnt->buf = NULL;
 	panfrost_gem_close(&perfcnt->mapping->obj->base.base, file_priv);
-	panfrost_mmu_as_put(pfdev, perfcnt->mapping->mmu);
 	panfrost_gem_mapping_put(perfcnt->mapping);
 	perfcnt->mapping = NULL;
 	pm_runtime_mark_last_busy(pfdev->dev);

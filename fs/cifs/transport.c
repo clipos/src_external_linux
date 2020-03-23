@@ -76,8 +76,6 @@ AllocMidQEntry(const struct smb_hdr *smb_buffer, struct TCP_Server_Info *server)
 	 * The default is for the mid to be synchronous, so the
 	 * default callback just wakes up the current task.
 	 */
-	get_task_struct(current);
-	temp->creator = current;
 	temp->callback = cifs_wake_up_task;
 	temp->callback_data = current;
 
@@ -160,7 +158,6 @@ static void _cifs_mid_q_entry_release(struct kref *refcount)
 		}
 	}
 #endif
-	put_task_struct(midEntry->creator);
 
 	mempool_free(midEntry, cifs_mid_poolp);
 }
@@ -939,7 +936,8 @@ cifs_check_receive(struct mid_q_entry *mid, struct TCP_Server_Info *server,
 }
 
 struct mid_q_entry *
-cifs_setup_request(struct cifs_ses *ses, struct smb_rqst *rqst)
+cifs_setup_request(struct cifs_ses *ses, struct TCP_Server_Info *ignored,
+		   struct smb_rqst *rqst)
 {
 	int rc;
 	struct smb_hdr *hdr = (struct smb_hdr *)rqst->rq_iov[0].iov_base;
@@ -1011,7 +1009,18 @@ compound_send_recv(const unsigned int xid, struct cifs_ses *ses,
 		return -EIO;
 	}
 
-	server = ses->server;
+	if (!ses->binding) {
+		uint index = 0;
+
+		if (ses->chan_count > 1) {
+			index = (uint)atomic_inc_return(&ses->chan_seq);
+			index %= ses->chan_count;
+		}
+		server = ses->chans[index].server;
+	} else {
+		server = cifs_ses_server(ses);
+	}
+
 	if (server->tcpStatus == CifsExiting)
 		return -ENOENT;
 
@@ -1056,7 +1065,7 @@ compound_send_recv(const unsigned int xid, struct cifs_ses *ses,
 	}
 
 	for (i = 0; i < num_rqst; i++) {
-		midQ[i] = server->ops->setup_request(ses, &rqst[i]);
+		midQ[i] = server->ops->setup_request(ses, server, &rqst[i]);
 		if (IS_ERR(midQ[i])) {
 			revert_current_mid(server, i);
 			for (j = 0; j < i; j++)
@@ -1299,7 +1308,7 @@ SendReceive(const unsigned int xid, struct cifs_ses *ses,
 
 	rc = allocate_mid(ses, in_buf, &midQ);
 	if (rc) {
-		mutex_unlock(&ses->server->srv_mutex);
+		mutex_unlock(&server->srv_mutex);
 		/* Update # of requests on wire to server */
 		add_credits(server, &credits, 0);
 		return rc;

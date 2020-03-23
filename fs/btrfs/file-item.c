@@ -274,8 +274,7 @@ found:
 		csum += count * csum_size;
 		nblocks -= count;
 next:
-		while (count > 0) {
-			count--;
+		while (count--) {
 			disk_bytenr += fs_info->sectorsize;
 			offset += fs_info->sectorsize;
 			page_bytes_left -= fs_info->sectorsize;
@@ -949,7 +948,6 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 	u8 type = btrfs_file_extent_type(leaf, fi);
 	int compress_type = btrfs_file_extent_compression(leaf, fi);
 
-	em->bdev = fs_info->fs_devices->latest_bdev;
 	btrfs_item_key_to_cpu(leaf, &key, slot);
 	extent_start = key.offset;
 

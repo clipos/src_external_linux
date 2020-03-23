@@ -603,7 +603,7 @@ static void imx_uart_dma_tx(struct imx_port *sport)
 
 	sport->tx_bytes = uart_circ_chars_pending(xmit);
 
-	if (xmit->tail < xmit->head || xmit->head == 0) {
+	if (xmit->tail < xmit->head) {
 		sport->dma_tx_nents = 1;
 		sg_init_one(sgl, xmit->buf + xmit->tail, sport->tx_bytes);
 	} else {
@@ -700,31 +700,20 @@ static void imx_uart_start_tx(struct uart_port *port)
 	}
 }
 
-static irqreturn_t __imx_uart_rtsint(int irq, void *dev_id)
+static irqreturn_t imx_uart_rtsint(int irq, void *dev_id)
 {
 	struct imx_port *sport = dev_id;
 	u32 usr1;
+
+	spin_lock(&sport->port.lock);
 
 	imx_uart_writel(sport, USR1_RTSD, USR1);
 	usr1 = imx_uart_readl(sport, USR1) & USR1_RTSS;
 	uart_handle_cts_change(&sport->port, !!usr1);
 	wake_up_interruptible(&sport->port.state->port.delta_msr_wait);
 
-	return IRQ_HANDLED;
-}
-
-static irqreturn_t imx_uart_rtsint(int irq, void *dev_id)
-{
-	struct imx_port *sport = dev_id;
-	irqreturn_t ret;
-
-	spin_lock(&sport->port.lock);
-
-	ret = __imx_uart_rtsint(irq, dev_id);
-
 	spin_unlock(&sport->port.lock);
-
-	return ret;
+	return IRQ_HANDLED;
 }
 
 static irqreturn_t imx_uart_txint(int irq, void *dev_id)
@@ -737,11 +726,13 @@ static irqreturn_t imx_uart_txint(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static irqreturn_t __imx_uart_rxint(int irq, void *dev_id)
+static irqreturn_t imx_uart_rxint(int irq, void *dev_id)
 {
 	struct imx_port *sport = dev_id;
 	unsigned int rx, flg, ignored = 0;
 	struct tty_port *port = &sport->port.state->port;
+
+	spin_lock(&sport->port.lock);
 
 	while (imx_uart_readl(sport, USR2) & USR2_RDR) {
 		u32 usr2;
@@ -801,23 +792,9 @@ static irqreturn_t __imx_uart_rxint(int irq, void *dev_id)
 	}
 
 out:
-	tty_flip_buffer_push(port);
-
-	return IRQ_HANDLED;
-}
-
-static irqreturn_t imx_uart_rxint(int irq, void *dev_id)
-{
-	struct imx_port *sport = dev_id;
-	irqreturn_t ret;
-
-	spin_lock(&sport->port.lock);
-
-	ret = __imx_uart_rxint(irq, dev_id);
-
 	spin_unlock(&sport->port.lock);
-
-	return ret;
+	tty_flip_buffer_push(port);
+	return IRQ_HANDLED;
 }
 
 static void imx_uart_clear_rx_errors(struct imx_port *sport);
@@ -878,8 +855,6 @@ static irqreturn_t imx_uart_int(int irq, void *dev_id)
 	unsigned int usr1, usr2, ucr1, ucr2, ucr3, ucr4;
 	irqreturn_t ret = IRQ_NONE;
 
-	spin_lock(&sport->port.lock);
-
 	usr1 = imx_uart_readl(sport, USR1);
 	usr2 = imx_uart_readl(sport, USR2);
 	ucr1 = imx_uart_readl(sport, UCR1);
@@ -913,25 +888,27 @@ static irqreturn_t imx_uart_int(int irq, void *dev_id)
 		usr2 &= ~USR2_ORE;
 
 	if (usr1 & (USR1_RRDY | USR1_AGTIM)) {
-		__imx_uart_rxint(irq, dev_id);
+		imx_uart_rxint(irq, dev_id);
 		ret = IRQ_HANDLED;
 	}
 
 	if ((usr1 & USR1_TRDY) || (usr2 & USR2_TXDC)) {
-		imx_uart_transmit_buffer(sport);
+		imx_uart_txint(irq, dev_id);
 		ret = IRQ_HANDLED;
 	}
 
 	if (usr1 & USR1_DTRD) {
 		imx_uart_writel(sport, USR1_DTRD, USR1);
 
+		spin_lock(&sport->port.lock);
 		imx_uart_mctrl_check(sport);
+		spin_unlock(&sport->port.lock);
 
 		ret = IRQ_HANDLED;
 	}
 
 	if (usr1 & USR1_RTSD) {
-		__imx_uart_rtsint(irq, dev_id);
+		imx_uart_rtsint(irq, dev_id);
 		ret = IRQ_HANDLED;
 	}
 
@@ -945,8 +922,6 @@ static irqreturn_t imx_uart_int(int irq, void *dev_id)
 		imx_uart_writel(sport, USR2_ORE, USR2);
 		ret = IRQ_HANDLED;
 	}
-
-	spin_unlock(&sport->port.lock);
 
 	return ret;
 }
@@ -1059,8 +1034,6 @@ static void imx_uart_timeout(struct timer_list *t)
 	}
 }
 
-#define RX_BUF_SIZE	(PAGE_SIZE)
-
 /*
  * There are two kinds of RX DMA interrupts(such as in the MX6Q):
  *   [1] the RX DMA buffer is full.
@@ -1143,7 +1116,8 @@ static void imx_uart_dma_rx_callback(void *data)
 }
 
 /* RX DMA buffer periods */
-#define RX_DMA_PERIODS 4
+#define RX_DMA_PERIODS	16
+#define RX_BUF_SIZE	(RX_DMA_PERIODS * PAGE_SIZE / 4)
 
 static int imx_uart_start_rx_dma(struct imx_port *sport)
 {

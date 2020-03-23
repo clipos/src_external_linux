@@ -210,9 +210,7 @@ static int tx_wait_done(struct snd_sof_ipc *ipc, struct snd_sof_ipc_msg *msg,
 	if (ret == 0) {
 		dev_err(sdev->dev, "error: ipc timed out for 0x%x size %d\n",
 			hdr->cmd, hdr->size);
-		snd_sof_dsp_dbg_dump(ipc->sdev, SOF_DBG_REGS | SOF_DBG_MBOX);
-		snd_sof_ipc_dump(ipc->sdev);
-		snd_sof_trace_notify_for_error(ipc->sdev);
+		snd_sof_handle_fw_exception(ipc->sdev);
 		ret = -ETIMEDOUT;
 	} else {
 		/* copy the data returned from DSP */
@@ -348,12 +346,19 @@ void snd_sof_ipc_msgs_rx(struct snd_sof_dev *sdev)
 		break;
 	case SOF_IPC_FW_READY:
 		/* check for FW boot completion */
-		if (sdev->fw_state == SOF_FW_BOOT_IN_PROGRESS) {
+		if (!sdev->boot_complete) {
 			err = sof_ops(sdev)->fw_ready(sdev, cmd);
-			if (err < 0)
-				sdev->fw_state = SOF_FW_BOOT_READY_FAILED;
-			else
-				sdev->fw_state = SOF_FW_BOOT_COMPLETE;
+			if (err < 0) {
+				/*
+				 * this indicates a mismatch in ABI
+				 * between the driver and fw
+				 */
+				dev_err(sdev->dev, "error: ABI mismatch %d\n",
+					err);
+			} else {
+				/* firmware boot completed OK */
+				sdev->boot_complete = true;
+			}
 
 			/* wake up firmware loader */
 			wake_up(&sdev->boot_wait);
@@ -497,7 +502,7 @@ int snd_sof_ipc_stream_posn(struct snd_sof_dev *sdev,
 
 	/* send IPC to the DSP */
 	err = sof_ipc_tx_message(sdev->ipc,
-				 stream.hdr.cmd, &stream, sizeof(stream), posn,
+				 stream.hdr.cmd, &stream, sizeof(stream), &posn,
 				 sizeof(*posn));
 	if (err < 0) {
 		dev_err(sdev->dev, "error: failed to get stream %d position\n",
@@ -788,12 +793,6 @@ struct snd_sof_ipc *snd_sof_ipc_init(struct snd_sof_dev *sdev)
 {
 	struct snd_sof_ipc *ipc;
 	struct snd_sof_ipc_msg *msg;
-
-	/* check if mandatory ops required for ipc are defined */
-	if (!sof_ops(sdev)->fw_ready) {
-		dev_err(sdev->dev, "error: ipc mandatory ops not defined\n");
-		return NULL;
-	}
 
 	ipc = devm_kzalloc(sdev->dev, sizeof(*ipc), GFP_KERNEL);
 	if (!ipc)

@@ -52,6 +52,11 @@
 			compatible = "ethernet-phy-ieee802.3-c22";
 			reg = <0>;
 		};
+
+		ethphy1: ethernet-phy@1 {
+			compatible = "ethernet-phy-ieee802.3-c22";
+			reg = <1>;
+		};
 	};
 };
 
@@ -132,6 +137,8 @@
 };
 
 &usdhc1 {
+	assigned-clocks = <&clk IMX_CONN_SDHC0_CLK>;
+	assigned-clock-rates = <200000000>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc1>;
 	bus-width = <8>;
@@ -142,6 +149,8 @@
 };
 
 &usdhc2 {
+	assigned-clocks = <&clk IMX_CONN_SDHC1_CLK>;
+	assigned-clock-rates = <200000000>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc2>;
 	bus-width = <4>;
@@ -227,5 +236,9 @@
 };
 
 &adma_dsp {
+	status = "okay";
+};
+
+&scu_key {
 	status = "okay";
 };

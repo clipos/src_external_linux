@@ -3888,6 +3888,9 @@ snd_soc_dai_link_event_pre_pmu(struct snd_soc_dapm_widget *w,
 	runtime->rate = params_rate(params);
 
 out:
+	if (ret < 0)
+		kfree(runtime);
+
 	kfree(params);
 	return ret;
 }
@@ -4749,7 +4752,7 @@ static void soc_dapm_shutdown_dapm(struct snd_soc_dapm_context *dapm)
 			continue;
 		if (w->power) {
 			dapm_seq_insert(w, &down_list, false);
-			w->new_power = 0;
+			w->power = 0;
 			powerdown = 1;
 		}
 	}

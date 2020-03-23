@@ -128,17 +128,14 @@ module_param_named(netns_mode, ib_devices_shared_netns, bool, 0444);
 MODULE_PARM_DESC(netns_mode,
 		 "Share device among net namespaces; default=1 (shared)");
 /**
- * rdma_dev_access_netns() - Return whether a rdma device can be accessed
+ * rdma_dev_access_netns() - Return whether an rdma device can be accessed
  *			     from a specified net namespace or not.
- * @device:	Pointer to rdma device which needs to be checked
+ * @dev:	Pointer to rdma device which needs to be checked
  * @net:	Pointer to net namesapce for which access to be checked
  *
- * rdma_dev_access_netns() - Return whether a rdma device can be accessed
- *			     from a specified net namespace or not. When
- *			     rdma device is in shared mode, it ignores the
- *			     net namespace. When rdma device is exclusive
- *			     to a net namespace, rdma device net namespace is
- *			     checked against the specified one.
+ * When the rdma device is in shared mode, it ignores the net namespace.
+ * When the rdma device is exclusive to a net namespace, rdma device net
+ * namespace is checked against the specified one.
  */
 bool rdma_dev_access_netns(const struct ib_device *dev, const struct net *net)
 {
@@ -591,7 +588,6 @@ struct ib_device *_ib_alloc_device(size_t size)
 
 	INIT_LIST_HEAD(&device->event_handler_list);
 	spin_lock_init(&device->event_handler_lock);
-	init_rwsem(&device->event_handler_rwsem);
 	mutex_init(&device->unregistration_lock);
 	/*
 	 * client_data needs to be alloc because we don't want our mark to be
@@ -1330,7 +1326,9 @@ out:
 
 /**
  * ib_register_device - Register an IB device with IB core
- * @device:Device to register
+ * @device: Device to register
+ * @name: unique string device name. This may include a '%' which will
+ * cause a unique index to be added to the passed device name.
  *
  * Low-level drivers use ib_register_device() to register their
  * devices with the IB core.  All registered clients will receive a
@@ -1457,7 +1455,7 @@ out:
 
 /**
  * ib_unregister_device - Unregister an IB device
- * @device: The device to unregister
+ * @ib_dev: The device to unregister
  *
  * Unregister an IB device.  All clients will receive a remove callback.
  *
@@ -1479,7 +1477,7 @@ EXPORT_SYMBOL(ib_unregister_device);
 
 /**
  * ib_unregister_device_and_put - Unregister a device while holding a 'get'
- * device: The device to unregister
+ * @ib_dev: The device to unregister
  *
  * This is the same as ib_unregister_device(), except it includes an internal
  * ib_device_put() that should match a 'get' obtained by the caller.
@@ -1549,7 +1547,7 @@ static void ib_unregister_work(struct work_struct *work)
 
 /**
  * ib_unregister_device_queued - Unregister a device using a work queue
- * device: The device to unregister
+ * @ib_dev: The device to unregister
  *
  * This schedules an asynchronous unregistration using a WQ for the device. A
  * driver should use this to avoid holding locks while doing unregistration,
@@ -1933,15 +1931,17 @@ EXPORT_SYMBOL(ib_set_client_data);
  *
  * ib_register_event_handler() registers an event handler that will be
  * called back when asynchronous IB events occur (as defined in
- * chapter 11 of the InfiniBand Architecture Specification). This
- * callback occurs in workqueue context.
+ * chapter 11 of the InfiniBand Architecture Specification).  This
+ * callback may occur in interrupt context.
  */
 void ib_register_event_handler(struct ib_event_handler *event_handler)
 {
-	down_write(&event_handler->device->event_handler_rwsem);
+	unsigned long flags;
+
+	spin_lock_irqsave(&event_handler->device->event_handler_lock, flags);
 	list_add_tail(&event_handler->list,
 		      &event_handler->device->event_handler_list);
-	up_write(&event_handler->device->event_handler_rwsem);
+	spin_unlock_irqrestore(&event_handler->device->event_handler_lock, flags);
 }
 EXPORT_SYMBOL(ib_register_event_handler);
 
@@ -1954,23 +1954,35 @@ EXPORT_SYMBOL(ib_register_event_handler);
  */
 void ib_unregister_event_handler(struct ib_event_handler *event_handler)
 {
-	down_write(&event_handler->device->event_handler_rwsem);
+	unsigned long flags;
+
+	spin_lock_irqsave(&event_handler->device->event_handler_lock, flags);
 	list_del(&event_handler->list);
-	up_write(&event_handler->device->event_handler_rwsem);
+	spin_unlock_irqrestore(&event_handler->device->event_handler_lock, flags);
 }
 EXPORT_SYMBOL(ib_unregister_event_handler);
 
-void ib_dispatch_event_clients(struct ib_event *event)
+/**
+ * ib_dispatch_event - Dispatch an asynchronous event
+ * @event:Event to dispatch
+ *
+ * Low-level drivers must call ib_dispatch_event() to dispatch the
+ * event to all registered event handlers when an asynchronous event
+ * occurs.
+ */
+void ib_dispatch_event(struct ib_event *event)
 {
+	unsigned long flags;
 	struct ib_event_handler *handler;
 
-	down_read(&event->device->event_handler_rwsem);
+	spin_lock_irqsave(&event->device->event_handler_lock, flags);
 
 	list_for_each_entry(handler, &event->device->event_handler_list, list)
 		handler->handler(handler, event);
 
-	up_read(&event->device->event_handler_rwsem);
+	spin_unlock_irqrestore(&event->device->event_handler_lock, flags);
 }
+EXPORT_SYMBOL(ib_dispatch_event);
 
 static int iw_query_port(struct ib_device *device,
 			   u8 port_num,
@@ -2365,7 +2377,7 @@ int ib_modify_device(struct ib_device *device,
 		     struct ib_device_modify *device_modify)
 {
 	if (!device->ops.modify_device)
-		return -ENOSYS;
+		return -EOPNOTSUPP;
 
 	return device->ops.modify_device(device, device_modify_mask,
 					 device_modify);
@@ -2610,6 +2622,7 @@ void ib_set_device_ops(struct ib_device *dev, const struct ib_device_ops *ops)
 	SET_DEVICE_OP(dev_ops, drain_sq);
 	SET_DEVICE_OP(dev_ops, enable_driver);
 	SET_DEVICE_OP(dev_ops, fill_res_entry);
+	SET_DEVICE_OP(dev_ops, fill_stat_entry);
 	SET_DEVICE_OP(dev_ops, get_dev_fw_str);
 	SET_DEVICE_OP(dev_ops, get_dma_mr);
 	SET_DEVICE_OP(dev_ops, get_hw_stats);
@@ -2618,9 +2631,9 @@ void ib_set_device_ops(struct ib_device *dev, const struct ib_device_ops *ops)
 	SET_DEVICE_OP(dev_ops, get_port_immutable);
 	SET_DEVICE_OP(dev_ops, get_vector_affinity);
 	SET_DEVICE_OP(dev_ops, get_vf_config);
+	SET_DEVICE_OP(dev_ops, get_vf_guid);
 	SET_DEVICE_OP(dev_ops, get_vf_stats);
 	SET_DEVICE_OP(dev_ops, init_port);
-	SET_DEVICE_OP(dev_ops, invalidate_range);
 	SET_DEVICE_OP(dev_ops, iw_accept);
 	SET_DEVICE_OP(dev_ops, iw_add_ref);
 	SET_DEVICE_OP(dev_ops, iw_connect);
@@ -2633,6 +2646,7 @@ void ib_set_device_ops(struct ib_device *dev, const struct ib_device_ops *ops)
 	SET_DEVICE_OP(dev_ops, map_mr_sg_pi);
 	SET_DEVICE_OP(dev_ops, map_phys_fmr);
 	SET_DEVICE_OP(dev_ops, mmap);
+	SET_DEVICE_OP(dev_ops, mmap_free);
 	SET_DEVICE_OP(dev_ops, modify_ah);
 	SET_DEVICE_OP(dev_ops, modify_cq);
 	SET_DEVICE_OP(dev_ops, modify_device);

@@ -187,7 +187,6 @@ struct dasd_ccw_req {
 
 	void (*callback)(struct dasd_ccw_req *, void *data);
 	void *callback_data;
-	unsigned int proc_bytes;	/* bytes for partial completion */
 };
 
 /*
@@ -388,9 +387,8 @@ struct dasd_discipline {
 	int (*ext_pool_warn_thrshld)(struct dasd_device *);
 	int (*ext_pool_oos)(struct dasd_device *);
 	int (*ext_pool_exhaust)(struct dasd_device *, struct dasd_ccw_req *);
-	struct dasd_ccw_req *(*ese_format)(struct dasd_device *,
-					   struct dasd_ccw_req *, struct irb *);
-	int (*ese_read)(struct dasd_ccw_req *, struct irb *);
+	struct dasd_ccw_req *(*ese_format)(struct dasd_device *, struct dasd_ccw_req *);
+	void (*ese_read)(struct dasd_ccw_req *);
 };
 
 extern struct dasd_discipline *dasd_diag_discipline_pointer;
@@ -476,11 +474,6 @@ struct dasd_profile {
 	spinlock_t lock;
 };
 
-struct dasd_format_entry {
-	struct list_head list;
-	sector_t track;
-};
-
 struct dasd_device {
 	/* Block device stuff. */
 	struct dasd_block *block;
@@ -546,7 +539,6 @@ struct dasd_device {
 	struct dentry *debugfs_dentry;
 	struct dentry *hosts_dentry;
 	struct dasd_profile profile;
-	struct dasd_format_entry format_entry;
 };
 
 struct dasd_block {
@@ -572,9 +564,6 @@ struct dasd_block {
 
 	struct dentry *debugfs_dentry;
 	struct dasd_profile profile;
-
-	struct list_head format_list;
-	spinlock_t format_lock;
 };
 
 struct dasd_attention_data {

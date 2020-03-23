@@ -583,7 +583,7 @@ bool amd_filter_mce(struct mce *m)
  * - Prevent possible spurious interrupts from the IF bank on Family 0x17
  *   Models 0x10-0x2F due to Erratum #1114.
  */
-void disable_err_thresholding(struct cpuinfo_x86 *c, unsigned int bank)
+static void disable_err_thresholding(struct cpuinfo_x86 *c, unsigned int bank)
 {
 	int i, num_msrs;
 	u64 hwcr;
@@ -1161,12 +1161,9 @@ static const struct sysfs_ops threshold_ops = {
 	.store			= store,
 };
 
-static void threshold_block_release(struct kobject *kobj);
-
 static struct kobj_type threshold_ktype = {
 	.sysfs_ops		= &threshold_ops,
 	.default_attrs		= default_attrs,
-	.release		= threshold_block_release,
 };
 
 static const char *get_name(unsigned int bank, struct threshold_block *b)
@@ -1199,9 +1196,8 @@ static const char *get_name(unsigned int bank, struct threshold_block *b)
 	return buf_mcatype;
 }
 
-static int allocate_threshold_blocks(unsigned int cpu, struct threshold_bank *tb,
-				     unsigned int bank, unsigned int block,
-				     u32 address)
+static int allocate_threshold_blocks(unsigned int cpu, unsigned int bank,
+				     unsigned int block, u32 address)
 {
 	struct threshold_block *b = NULL;
 	u32 low, high;
@@ -1245,12 +1241,16 @@ static int allocate_threshold_blocks(unsigned int cpu, struct threshold_bank *tb
 
 	INIT_LIST_HEAD(&b->miscj);
 
-	if (tb->blocks)
-		list_add(&b->miscj, &tb->blocks->miscj);
-	else
-		tb->blocks = b;
+	if (per_cpu(threshold_banks, cpu)[bank]->blocks) {
+		list_add(&b->miscj,
+			 &per_cpu(threshold_banks, cpu)[bank]->blocks->miscj);
+	} else {
+		per_cpu(threshold_banks, cpu)[bank]->blocks = b;
+	}
 
-	err = kobject_init_and_add(&b->kobj, &threshold_ktype, tb->kobj, get_name(bank, b));
+	err = kobject_init_and_add(&b->kobj, &threshold_ktype,
+				   per_cpu(threshold_banks, cpu)[bank]->kobj,
+				   get_name(bank, b));
 	if (err)
 		goto out_free;
 recurse:
@@ -1258,7 +1258,7 @@ recurse:
 	if (!address)
 		return 0;
 
-	err = allocate_threshold_blocks(cpu, tb, bank, block, address);
+	err = allocate_threshold_blocks(cpu, bank, block, address);
 	if (err)
 		goto out_free;
 
@@ -1343,6 +1343,8 @@ static int threshold_create_bank(unsigned int cpu, unsigned int bank)
 		goto out_free;
 	}
 
+	per_cpu(threshold_banks, cpu)[bank] = b;
+
 	if (is_shared_bank(bank)) {
 		refcount_set(&b->cpus, 1);
 
@@ -1353,13 +1355,9 @@ static int threshold_create_bank(unsigned int cpu, unsigned int bank)
 		}
 	}
 
-	err = allocate_threshold_blocks(cpu, b, bank, 0, msr_ops.misc(bank));
-	if (err)
-		goto out_free;
-
-	per_cpu(threshold_banks, cpu)[bank] = b;
-
-	return 0;
+	err = allocate_threshold_blocks(cpu, bank, 0, msr_ops.misc(bank));
+	if (!err)
+		goto out;
 
  out_free:
 	kfree(b);
@@ -1368,12 +1366,8 @@ static int threshold_create_bank(unsigned int cpu, unsigned int bank)
 	return err;
 }
 
-static void threshold_block_release(struct kobject *kobj)
-{
-	kfree(to_block(kobj));
-}
-
-static void deallocate_threshold_block(unsigned int cpu, unsigned int bank)
+static void deallocate_threshold_block(unsigned int cpu,
+						 unsigned int bank)
 {
 	struct threshold_block *pos = NULL;
 	struct threshold_block *tmp = NULL;
@@ -1383,11 +1377,13 @@ static void deallocate_threshold_block(unsigned int cpu, unsigned int bank)
 		return;
 
 	list_for_each_entry_safe(pos, tmp, &head->blocks->miscj, miscj) {
-		list_del(&pos->miscj);
 		kobject_put(&pos->kobj);
+		list_del(&pos->miscj);
+		kfree(pos);
 	}
 
-	kobject_put(&head->blocks->kobj);
+	kfree(per_cpu(threshold_banks, cpu)[bank]->blocks);
+	per_cpu(threshold_banks, cpu)[bank]->blocks = NULL;
 }
 
 static void __threshold_remove_blocks(struct threshold_bank *b)

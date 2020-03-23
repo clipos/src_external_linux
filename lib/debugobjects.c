@@ -132,18 +132,14 @@ static void fill_pool(void)
 	struct debug_obj *obj;
 	unsigned long flags;
 
-	if (likely(READ_ONCE(obj_pool_free) >= debug_objects_pool_min_level))
+	if (likely(obj_pool_free >= debug_objects_pool_min_level))
 		return;
 
 	/*
 	 * Reuse objs from the global free list; they will be reinitialized
 	 * when allocating.
-	 *
-	 * Both obj_nr_tofree and obj_pool_free are checked locklessly; the
-	 * READ_ONCE()s pair with the WRITE_ONCE()s in pool_lock critical
-	 * sections.
 	 */
-	while (READ_ONCE(obj_nr_tofree) && (READ_ONCE(obj_pool_free) < obj_pool_min_free)) {
+	while (obj_nr_tofree && (obj_pool_free < obj_pool_min_free)) {
 		raw_spin_lock_irqsave(&pool_lock, flags);
 		/*
 		 * Recheck with the lock held as the worker thread might have
@@ -152,9 +148,9 @@ static void fill_pool(void)
 		while (obj_nr_tofree && (obj_pool_free < obj_pool_min_free)) {
 			obj = hlist_entry(obj_to_free.first, typeof(*obj), node);
 			hlist_del(&obj->node);
-			WRITE_ONCE(obj_nr_tofree, obj_nr_tofree - 1);
+			obj_nr_tofree--;
 			hlist_add_head(&obj->node, &obj_pool);
-			WRITE_ONCE(obj_pool_free, obj_pool_free + 1);
+			obj_pool_free++;
 		}
 		raw_spin_unlock_irqrestore(&pool_lock, flags);
 	}
@@ -162,7 +158,7 @@ static void fill_pool(void)
 	if (unlikely(!obj_cache))
 		return;
 
-	while (READ_ONCE(obj_pool_free) < debug_objects_pool_min_level) {
+	while (obj_pool_free < debug_objects_pool_min_level) {
 		struct debug_obj *new[ODEBUG_BATCH_SIZE];
 		int cnt;
 
@@ -178,7 +174,7 @@ static void fill_pool(void)
 		while (cnt) {
 			hlist_add_head(&new[--cnt]->node, &obj_pool);
 			debug_objects_allocated++;
-			WRITE_ONCE(obj_pool_free, obj_pool_free + 1);
+			obj_pool_free++;
 		}
 		raw_spin_unlock_irqrestore(&pool_lock, flags);
 	}
@@ -240,7 +236,7 @@ alloc_object(void *addr, struct debug_bucket *b, struct debug_obj_descr *descr)
 	obj = __alloc_object(&obj_pool);
 	if (obj) {
 		obj_pool_used++;
-		WRITE_ONCE(obj_pool_free, obj_pool_free - 1);
+		obj_pool_free--;
 
 		/*
 		 * Looking ahead, allocate one batch of debug objects and
@@ -259,7 +255,7 @@ alloc_object(void *addr, struct debug_bucket *b, struct debug_obj_descr *descr)
 					       &percpu_pool->free_objs);
 				percpu_pool->obj_free++;
 				obj_pool_used++;
-				WRITE_ONCE(obj_pool_free, obj_pool_free - 1);
+				obj_pool_free--;
 			}
 		}
 
@@ -313,8 +309,8 @@ static void free_obj_work(struct work_struct *work)
 		obj = hlist_entry(obj_to_free.first, typeof(*obj), node);
 		hlist_del(&obj->node);
 		hlist_add_head(&obj->node, &obj_pool);
-		WRITE_ONCE(obj_pool_free, obj_pool_free + 1);
-		WRITE_ONCE(obj_nr_tofree, obj_nr_tofree - 1);
+		obj_pool_free++;
+		obj_nr_tofree--;
 	}
 	raw_spin_unlock_irqrestore(&pool_lock, flags);
 	return;
@@ -328,7 +324,7 @@ free_objs:
 	if (obj_nr_tofree) {
 		hlist_move_list(&obj_to_free, &tofree);
 		debug_objects_freed += obj_nr_tofree;
-		WRITE_ONCE(obj_nr_tofree, 0);
+		obj_nr_tofree = 0;
 	}
 	raw_spin_unlock_irqrestore(&pool_lock, flags);
 
@@ -379,10 +375,10 @@ free_to_obj_pool:
 	obj_pool_used--;
 
 	if (work) {
-		WRITE_ONCE(obj_nr_tofree, obj_nr_tofree + 1);
+		obj_nr_tofree++;
 		hlist_add_head(&obj->node, &obj_to_free);
 		if (lookahead_count) {
-			WRITE_ONCE(obj_nr_tofree, obj_nr_tofree + lookahead_count);
+			obj_nr_tofree += lookahead_count;
 			obj_pool_used -= lookahead_count;
 			while (lookahead_count) {
 				hlist_add_head(&objs[--lookahead_count]->node,
@@ -400,15 +396,15 @@ free_to_obj_pool:
 			for (i = 0; i < ODEBUG_BATCH_SIZE; i++) {
 				obj = __alloc_object(&obj_pool);
 				hlist_add_head(&obj->node, &obj_to_free);
-				WRITE_ONCE(obj_pool_free, obj_pool_free - 1);
-				WRITE_ONCE(obj_nr_tofree, obj_nr_tofree + 1);
+				obj_pool_free--;
+				obj_nr_tofree++;
 			}
 		}
 	} else {
-		WRITE_ONCE(obj_pool_free, obj_pool_free + 1);
+		obj_pool_free++;
 		hlist_add_head(&obj->node, &obj_pool);
 		if (lookahead_count) {
-			WRITE_ONCE(obj_pool_free, obj_pool_free + lookahead_count);
+			obj_pool_free += lookahead_count;
 			obj_pool_used -= lookahead_count;
 			while (lookahead_count) {
 				hlist_add_head(&objs[--lookahead_count]->node,
@@ -427,7 +423,7 @@ free_to_obj_pool:
 static void free_object(struct debug_obj *obj)
 {
 	__free_object(obj);
-	if (!READ_ONCE(obj_freeing) && READ_ONCE(obj_nr_tofree)) {
+	if (!obj_freeing && obj_nr_tofree) {
 		WRITE_ONCE(obj_freeing, true);
 		schedule_delayed_work(&debug_obj_work, ODEBUG_FREE_WORK_DELAY);
 	}
@@ -986,7 +982,7 @@ repeat:
 		debug_objects_maxchecked = objs_checked;
 
 	/* Schedule work to actually kmem_cache_free() objects */
-	if (!READ_ONCE(obj_freeing) && READ_ONCE(obj_nr_tofree)) {
+	if (!obj_freeing && obj_nr_tofree) {
 		WRITE_ONCE(obj_freeing, true);
 		schedule_delayed_work(&debug_obj_work, ODEBUG_FREE_WORK_DELAY);
 	}
@@ -1012,12 +1008,12 @@ static int debug_stats_show(struct seq_file *m, void *v)
 	seq_printf(m, "max_checked   :%d\n", debug_objects_maxchecked);
 	seq_printf(m, "warnings      :%d\n", debug_objects_warnings);
 	seq_printf(m, "fixups        :%d\n", debug_objects_fixups);
-	seq_printf(m, "pool_free     :%d\n", READ_ONCE(obj_pool_free) + obj_percpu_free);
+	seq_printf(m, "pool_free     :%d\n", obj_pool_free + obj_percpu_free);
 	seq_printf(m, "pool_pcp_free :%d\n", obj_percpu_free);
 	seq_printf(m, "pool_min_free :%d\n", obj_pool_min_free);
 	seq_printf(m, "pool_used     :%d\n", obj_pool_used - obj_percpu_free);
 	seq_printf(m, "pool_max_used :%d\n", obj_pool_max_used);
-	seq_printf(m, "on_free_list  :%d\n", READ_ONCE(obj_nr_tofree));
+	seq_printf(m, "on_free_list  :%d\n", obj_nr_tofree);
 	seq_printf(m, "objs_allocated:%d\n", debug_objects_allocated);
 	seq_printf(m, "objs_freed    :%d\n", debug_objects_freed);
 	return 0;

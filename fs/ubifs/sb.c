@@ -161,7 +161,7 @@ static int create_default_filesystem(struct ubifs_info *c)
 	sup = kzalloc(ALIGN(UBIFS_SB_NODE_SZ, c->min_io_size), GFP_KERNEL);
 	mst = kzalloc(c->mst_node_alsz, GFP_KERNEL);
 	idx_node_size = ubifs_idx_node_sz(c, 1);
-	idx = kzalloc(ALIGN(idx_node_size, c->min_io_size), GFP_KERNEL);
+	idx = kzalloc(ALIGN(tmp, c->min_io_size), GFP_KERNEL);
 	ino = kzalloc(ALIGN(UBIFS_INO_NODE_SZ, c->min_io_size), GFP_KERNEL);
 	cs = kzalloc(ALIGN(UBIFS_CS_NODE_SZ, c->min_io_size), GFP_KERNEL);
 
@@ -184,7 +184,7 @@ static int create_default_filesystem(struct ubifs_info *c)
 		if (err)
 			goto out;
 	} else {
-		sup->hash_algo = 0xffff;
+		sup->hash_algo = cpu_to_le16(0xffff);
 	}
 
 	sup->ch.node_type  = UBIFS_SB_NODE;

@@ -36,7 +36,6 @@
 #include <linux/io.h>
 #include <linux/slab.h>
 #include <linux/export.h>
-#include <linux/nospec.h>
 #include <asm/processor.h>
 #include <asm/page.h>
 #include <asm/current.h>
@@ -69,14 +68,13 @@ static unsigned long ioapic_read_indirect(struct kvm_ioapic *ioapic,
 	default:
 		{
 			u32 redir_index = (ioapic->ioregsel - 0x10) >> 1;
-			u64 redir_content = ~0ULL;
+			u64 redir_content;
 
-			if (redir_index < IOAPIC_NUM_PINS) {
-				u32 index = array_index_nospec(
-					redir_index, IOAPIC_NUM_PINS);
-
-				redir_content = ioapic->redirtbl[index].bits;
-			}
+			if (redir_index < IOAPIC_NUM_PINS)
+				redir_content =
+					ioapic->redirtbl[redir_index].bits;
+			else
+				redir_content = ~0ULL;
 
 			result = (ioapic->ioregsel & 0x1) ?
 			    (redir_content >> 32) & 0xffffffff :
@@ -273,8 +271,9 @@ static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 {
 	unsigned index;
 	bool mask_before, mask_after;
-	int old_remote_irr, old_delivery_status;
 	union kvm_ioapic_redirect_entry *e;
+	unsigned long vcpu_bitmap;
+	int old_remote_irr, old_delivery_status, old_dest_id, old_dest_mode;
 
 	switch (ioapic->ioregsel) {
 	case IOAPIC_REG_VERSION:
@@ -293,12 +292,13 @@ static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 
 		if (index >= IOAPIC_NUM_PINS)
 			return;
-		index = array_index_nospec(index, IOAPIC_NUM_PINS);
 		e = &ioapic->redirtbl[index];
 		mask_before = e->fields.mask;
 		/* Preserve read-only fields */
 		old_remote_irr = e->fields.remote_irr;
 		old_delivery_status = e->fields.delivery_status;
+		old_dest_id = e->fields.dest_id;
+		old_dest_mode = e->fields.dest_mode;
 		if (ioapic->ioregsel & 1) {
 			e->bits &= 0xffffffff;
 			e->bits |= (u64) val << 32;
@@ -324,7 +324,34 @@ static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 		if (e->fields.trig_mode == IOAPIC_LEVEL_TRIG
 		    && ioapic->irr & (1 << index))
 			ioapic_service(ioapic, index, false);
-		kvm_make_scan_ioapic_request(ioapic->kvm);
+		if (e->fields.delivery_mode == APIC_DM_FIXED) {
+			struct kvm_lapic_irq irq;
+
+			irq.shorthand = 0;
+			irq.vector = e->fields.vector;
+			irq.delivery_mode = e->fields.delivery_mode << 8;
+			irq.dest_id = e->fields.dest_id;
+			irq.dest_mode = e->fields.dest_mode;
+			bitmap_zero(&vcpu_bitmap, 16);
+			kvm_bitmap_or_dest_vcpus(ioapic->kvm, &irq,
+						 &vcpu_bitmap);
+			if (old_dest_mode != e->fields.dest_mode ||
+			    old_dest_id != e->fields.dest_id) {
+				/*
+				 * Update vcpu_bitmap with vcpus specified in
+				 * the previous request as well. This is done to
+				 * keep ioapic_handled_vectors synchronized.
+				 */
+				irq.dest_id = old_dest_id;
+				irq.dest_mode = old_dest_mode;
+				kvm_bitmap_or_dest_vcpus(ioapic->kvm, &irq,
+							 &vcpu_bitmap);
+			}
+			kvm_make_scan_ioapic_request_mask(ioapic->kvm,
+							  &vcpu_bitmap);
+		} else {
+			kvm_make_scan_ioapic_request(ioapic->kvm);
+		}
 		break;
 	}
 }

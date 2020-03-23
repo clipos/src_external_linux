@@ -75,7 +75,7 @@ static unsigned long get_random(unsigned long limit)
 		*(unsigned long *) prng.parm_block ^= seed;
 		for (i = 0; i < 16; i++) {
 			cpacf_kmc(CPACF_KMC_PRNG, prng.parm_block,
-				  (u8 *) entropy, (u8 *) entropy,
+				  (char *) entropy, (char *) entropy,
 				  sizeof(entropy));
 			memcpy(prng.parm_block, entropy, sizeof(entropy));
 		}

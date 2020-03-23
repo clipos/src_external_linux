@@ -4,7 +4,6 @@
 #include <sched.h>
 #include <sys/socket.h>
 #include <test_progs.h>
-#include "libbpf_internal.h"
 
 static void on_sample(void *ctx, int cpu, void *data, __u32 size)
 {
@@ -20,7 +19,7 @@ static void on_sample(void *ctx, int cpu, void *data, __u32 size)
 
 void test_perf_buffer(void)
 {
-	int err, prog_fd, on_len, nr_on_cpus = 0,  nr_cpus, i, duration = 0;
+	int err, prog_fd, nr_cpus, i, duration = 0;
 	const char *prog_name = "kprobe/sys_nanosleep";
 	const char *file = "./test_perf_buffer.o";
 	struct perf_buffer_opts pb_opts = {};
@@ -30,27 +29,15 @@ void test_perf_buffer(void)
 	struct bpf_object *obj;
 	struct perf_buffer *pb;
 	struct bpf_link *link;
-	bool *online;
 
 	nr_cpus = libbpf_num_possible_cpus();
 	if (CHECK(nr_cpus < 0, "nr_cpus", "err %d\n", nr_cpus))
 		return;
 
-	err = parse_cpu_mask_file("/sys/devices/system/cpu/online",
-				  &online, &on_len);
-	if (CHECK(err, "nr_on_cpus", "err %d\n", err))
-		return;
-
-	for (i = 0; i < on_len; i++)
-		if (online[i])
-			nr_on_cpus++;
-
 	/* load program */
 	err = bpf_prog_load(file, BPF_PROG_TYPE_KPROBE, &obj, &prog_fd);
-	if (CHECK(err, "obj_load", "err %d errno %d\n", err, errno)) {
-		obj = NULL;
-		goto out_close;
-	}
+	if (CHECK(err, "obj_load", "err %d errno %d\n", err, errno))
+		return;
 
 	prog = bpf_object__find_program_by_title(obj, prog_name);
 	if (CHECK(!prog, "find_probe", "prog '%s' not found\n", prog_name))
@@ -77,11 +64,6 @@ void test_perf_buffer(void)
 	/* trigger kprobe on every CPU */
 	CPU_ZERO(&cpu_seen);
 	for (i = 0; i < nr_cpus; i++) {
-		if (i >= on_len || !online[i]) {
-			printf("skipping offline CPU #%d\n", i);
-			continue;
-		}
-
 		CPU_ZERO(&cpu_set);
 		CPU_SET(i, &cpu_set);
 
@@ -99,8 +81,8 @@ void test_perf_buffer(void)
 	if (CHECK(err < 0, "perf_buffer__poll", "err %d\n", err))
 		goto out_free_pb;
 
-	if (CHECK(CPU_COUNT(&cpu_seen) != nr_on_cpus, "seen_cpu_cnt",
-		  "expect %d, seen %d\n", nr_on_cpus, CPU_COUNT(&cpu_seen)))
+	if (CHECK(CPU_COUNT(&cpu_seen) != nr_cpus, "seen_cpu_cnt",
+		  "expect %d, seen %d\n", nr_cpus, CPU_COUNT(&cpu_seen)))
 		goto out_free_pb;
 
 out_free_pb:
@@ -109,5 +91,4 @@ out_detach:
 	bpf_link__destroy(link);
 out_close:
 	bpf_object__close(obj);
-	free(online);
 }

@@ -106,19 +106,6 @@ static unsigned int __ioremap_check_encrypted(struct resource *res)
 	return 0;
 }
 
-/*
- * The EFI runtime services data area is not covered by walk_mem_res(), but must
- * be mapped encrypted when SEV is active.
- */
-static void __ioremap_check_other(resource_size_t addr, struct ioremap_desc *desc)
-{
-	if (!sev_active())
-		return;
-
-	if (efi_mem_type(addr) == EFI_RUNTIME_SERVICES_DATA)
-		desc->flags |= IORES_MAP_ENCRYPTED;
-}
-
 static int __ioremap_collect_map_flags(struct resource *res, void *arg)
 {
 	struct ioremap_desc *desc = arg;
@@ -137,9 +124,6 @@ static int __ioremap_collect_map_flags(struct resource *res, void *arg)
  * To avoid multiple resource walks, this function walks resources marked as
  * IORESOURCE_MEM and IORESOURCE_BUSY and looking for system RAM and/or a
  * resource described not as IORES_DESC_NONE (e.g. IORES_DESC_ACPI_TABLES).
- *
- * After that, deal with misc other ranges in __ioremap_check_other() which do
- * not fall into the above category.
  */
 static void __ioremap_check_mem(resource_size_t addr, unsigned long size,
 				struct ioremap_desc *desc)
@@ -151,8 +135,6 @@ static void __ioremap_check_mem(resource_size_t addr, unsigned long size,
 	memset(desc, 0, sizeof(struct ioremap_desc));
 
 	walk_mem_res(start, end, desc, __ioremap_collect_map_flags);
-
-	__ioremap_check_other(addr, desc);
 }
 
 /*
@@ -298,11 +280,11 @@ err_free_memtype:
 }
 
 /**
- * ioremap_nocache     -   map bus memory into CPU space
+ * ioremap     -   map bus memory into CPU space
  * @phys_addr:    bus address of the memory
  * @size:      size of the resource to map
  *
- * ioremap_nocache performs a platform specific sequence of operations to
+ * ioremap performs a platform specific sequence of operations to
  * make bus memory CPU accessible via the readb/readw/readl/writeb/
  * writew/writel functions and the other mmio helpers. The returned
  * address is not guaranteed to be usable directly as a virtual
@@ -318,7 +300,7 @@ err_free_memtype:
  *
  * Must be freed with iounmap.
  */
-void __iomem *ioremap_nocache(resource_size_t phys_addr, unsigned long size)
+void __iomem *ioremap(resource_size_t phys_addr, unsigned long size)
 {
 	/*
 	 * Ideally, this should be:
@@ -333,7 +315,7 @@ void __iomem *ioremap_nocache(resource_size_t phys_addr, unsigned long size)
 	return __ioremap_caller(phys_addr, size, pcm,
 				__builtin_return_address(0), false);
 }
-EXPORT_SYMBOL(ioremap_nocache);
+EXPORT_SYMBOL(ioremap);
 
 /**
  * ioremap_uc     -   map bus memory into CPU space as strongly uncachable
@@ -643,6 +625,17 @@ static bool memremap_is_setup_data(resource_size_t phys_addr,
 
 		paddr_next = data->next;
 		len = data->len;
+
+		if ((phys_addr > paddr) && (phys_addr < (paddr + len))) {
+			memunmap(data);
+			return true;
+		}
+
+		if (data->type == SETUP_INDIRECT &&
+		    ((struct setup_indirect *)data->data)->type != SETUP_INDIRECT) {
+			paddr = ((struct setup_indirect *)data->data)->addr;
+			len = ((struct setup_indirect *)data->data)->len;
+		}
 
 		memunmap(data);
 

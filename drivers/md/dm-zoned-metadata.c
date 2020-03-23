@@ -134,7 +134,6 @@ struct dmz_metadata {
 
 	sector_t		zone_bitmap_size;
 	unsigned int		zone_nr_bitmap_blocks;
-	unsigned int		zone_bits_per_mblk;
 
 	unsigned int		nr_bitmap_blocks;
 	unsigned int		nr_map_blocks;
@@ -1089,9 +1088,10 @@ static int dmz_load_sb(struct dmz_metadata *zmd)
 /*
  * Initialize a zone descriptor.
  */
-static int dmz_init_zone(struct dmz_metadata *zmd, struct dm_zone *zone,
-			 struct blk_zone *blkz)
+static int dmz_init_zone(struct blk_zone *blkz, unsigned int idx, void *data)
 {
+	struct dmz_metadata *zmd = data;
+	struct dm_zone *zone = &zmd->zones[idx];
 	struct dmz_dev *dev = zmd->dev;
 
 	/* Ignore the eventual last runt (smaller) zone */
@@ -1105,26 +1105,29 @@ static int dmz_init_zone(struct dmz_metadata *zmd, struct dm_zone *zone,
 	atomic_set(&zone->refcount, 0);
 	zone->chunk = DMZ_MAP_UNMAPPED;
 
-	if (blkz->type == BLK_ZONE_TYPE_CONVENTIONAL) {
+	switch (blkz->type) {
+	case BLK_ZONE_TYPE_CONVENTIONAL:
 		set_bit(DMZ_RND, &zone->flags);
 		zmd->nr_rnd_zones++;
-	} else if (blkz->type == BLK_ZONE_TYPE_SEQWRITE_REQ ||
-		   blkz->type == BLK_ZONE_TYPE_SEQWRITE_PREF) {
+		break;
+	case BLK_ZONE_TYPE_SEQWRITE_REQ:
+	case BLK_ZONE_TYPE_SEQWRITE_PREF:
 		set_bit(DMZ_SEQ, &zone->flags);
-	} else
+		break;
+	default:
 		return -ENXIO;
-
-	if (blkz->cond == BLK_ZONE_COND_OFFLINE)
-		set_bit(DMZ_OFFLINE, &zone->flags);
-	else if (blkz->cond == BLK_ZONE_COND_READONLY)
-		set_bit(DMZ_READ_ONLY, &zone->flags);
+	}
 
 	if (dmz_is_rnd(zone))
 		zone->wp_block = 0;
 	else
 		zone->wp_block = dmz_sect2blk(blkz->wp - blkz->start);
 
-	if (!dmz_is_offline(zone) && !dmz_is_readonly(zone)) {
+	if (blkz->cond == BLK_ZONE_COND_OFFLINE)
+		set_bit(DMZ_OFFLINE, &zone->flags);
+	else if (blkz->cond == BLK_ZONE_COND_READONLY)
+		set_bit(DMZ_READ_ONLY, &zone->flags);
+	else {
 		zmd->nr_useable_zones++;
 		if (dmz_is_rnd(zone)) {
 			zmd->nr_rnd_zones++;
@@ -1148,30 +1151,17 @@ static void dmz_drop_zones(struct dmz_metadata *zmd)
 }
 
 /*
- * The size of a zone report in number of zones.
- * This results in 4096*64B=256KB report zones commands.
- */
-#define DMZ_REPORT_NR_ZONES	4096
-
-/*
  * Allocate and initialize zone descriptors using the zone
  * information from disk.
  */
 static int dmz_init_zones(struct dmz_metadata *zmd)
 {
 	struct dmz_dev *dev = zmd->dev;
-	struct dm_zone *zone;
-	struct blk_zone *blkz;
-	unsigned int nr_blkz;
-	sector_t sector = 0;
-	int i, ret = 0;
+	int ret;
 
 	/* Init */
 	zmd->zone_bitmap_size = dev->zone_nr_blocks >> 3;
-	zmd->zone_nr_bitmap_blocks =
-		max_t(sector_t, 1, zmd->zone_bitmap_size >> DMZ_BLOCK_SHIFT);
-	zmd->zone_bits_per_mblk = min_t(sector_t, dev->zone_nr_blocks,
-					DMZ_BLOCK_SIZE_BITS);
+	zmd->zone_nr_bitmap_blocks = zmd->zone_bitmap_size >> DMZ_BLOCK_SHIFT;
 
 	/* Allocate zone array */
 	zmd->zones = kcalloc(dev->nr_zones, sizeof(struct dm_zone), GFP_KERNEL);
@@ -1181,54 +1171,38 @@ static int dmz_init_zones(struct dmz_metadata *zmd)
 	dmz_dev_info(dev, "Using %zu B for zone information",
 		     sizeof(struct dm_zone) * dev->nr_zones);
 
-	/* Get zone information */
-	nr_blkz = DMZ_REPORT_NR_ZONES;
-	blkz = kcalloc(nr_blkz, sizeof(struct blk_zone), GFP_KERNEL);
-	if (!blkz) {
-		ret = -ENOMEM;
-		goto out;
-	}
-
 	/*
-	 * Get zone information and initialize zone descriptors.
-	 * At the same time, determine where the super block
-	 * should be: first block of the first randomly writable
-	 * zone.
+	 * Get zone information and initialize zone descriptors.  At the same
+	 * time, determine where the super block should be: first block of the
+	 * first randomly writable zone.
 	 */
-	zone = zmd->zones;
-	while (sector < dev->capacity) {
-		/* Get zone information */
-		nr_blkz = DMZ_REPORT_NR_ZONES;
-		ret = blkdev_report_zones(dev->bdev, sector, blkz, &nr_blkz);
-		if (ret) {
-			dmz_dev_err(dev, "Report zones failed %d", ret);
-			goto out;
-		}
-
-		if (!nr_blkz)
-			break;
-
-		/* Process report */
-		for (i = 0; i < nr_blkz; i++) {
-			ret = dmz_init_zone(zmd, zone, &blkz[i]);
-			if (ret)
-				goto out;
-			sector += dev->zone_nr_sectors;
-			zone++;
-		}
-	}
-
-	/* The entire zone configuration of the disk should now be known */
-	if (sector < dev->capacity) {
-		dmz_dev_err(dev, "Failed to get correct zone information");
-		ret = -ENXIO;
-	}
-out:
-	kfree(blkz);
-	if (ret)
+	ret = blkdev_report_zones(dev->bdev, 0, BLK_ALL_ZONES, dmz_init_zone,
+				  zmd);
+	if (ret < 0) {
 		dmz_drop_zones(zmd);
+		return ret;
+	}
 
-	return ret;
+	return 0;
+}
+
+static int dmz_update_zone_cb(struct blk_zone *blkz, unsigned int idx,
+			      void *data)
+{
+	struct dm_zone *zone = data;
+
+	clear_bit(DMZ_OFFLINE, &zone->flags);
+	clear_bit(DMZ_READ_ONLY, &zone->flags);
+	if (blkz->cond == BLK_ZONE_COND_OFFLINE)
+		set_bit(DMZ_OFFLINE, &zone->flags);
+	else if (blkz->cond == BLK_ZONE_COND_READONLY)
+		set_bit(DMZ_READ_ONLY, &zone->flags);
+
+	if (dmz_is_seq(zone))
+		zone->wp_block = dmz_sect2blk(blkz->wp - blkz->start);
+	else
+		zone->wp_block = 0;
+	return 0;
 }
 
 /*
@@ -1236,9 +1210,7 @@ out:
  */
 static int dmz_update_zone(struct dmz_metadata *zmd, struct dm_zone *zone)
 {
-	unsigned int nr_blkz = 1;
 	unsigned int noio_flag;
-	struct blk_zone blkz;
 	int ret;
 
 	/*
@@ -1248,29 +1220,18 @@ static int dmz_update_zone(struct dmz_metadata *zmd, struct dm_zone *zone)
 	 * GFP_NOIO was specified.
 	 */
 	noio_flag = memalloc_noio_save();
-	ret = blkdev_report_zones(zmd->dev->bdev, dmz_start_sect(zmd, zone),
-				  &blkz, &nr_blkz);
+	ret = blkdev_report_zones(zmd->dev->bdev, dmz_start_sect(zmd, zone), 1,
+				  dmz_update_zone_cb, zone);
 	memalloc_noio_restore(noio_flag);
-	if (!nr_blkz)
+
+	if (ret == 0)
 		ret = -EIO;
-	if (ret) {
+	if (ret < 0) {
 		dmz_dev_err(zmd->dev, "Get zone %u report failed",
 			    dmz_id(zmd, zone));
 		dmz_check_bdev(zmd->dev);
 		return ret;
 	}
-
-	clear_bit(DMZ_OFFLINE, &zone->flags);
-	clear_bit(DMZ_READ_ONLY, &zone->flags);
-	if (blkz.cond == BLK_ZONE_COND_OFFLINE)
-		set_bit(DMZ_OFFLINE, &zone->flags);
-	else if (blkz.cond == BLK_ZONE_COND_READONLY)
-		set_bit(DMZ_READ_ONLY, &zone->flags);
-
-	if (dmz_is_seq(zone))
-		zone->wp_block = dmz_sect2blk(blkz.wp - blkz.start);
-	else
-		zone->wp_block = 0;
 
 	return 0;
 }
@@ -1325,9 +1286,9 @@ static int dmz_reset_zone(struct dmz_metadata *zmd, struct dm_zone *zone)
 	if (!dmz_is_empty(zone) || dmz_seq_write_err(zone)) {
 		struct dmz_dev *dev = zmd->dev;
 
-		ret = blkdev_reset_zones(dev->bdev,
-					 dmz_start_sect(zmd, zone),
-					 dev->zone_nr_sectors, GFP_NOIO);
+		ret = blkdev_zone_mgmt(dev->bdev, REQ_OP_ZONE_RESET,
+				       dmz_start_sect(zmd, zone),
+				       dev->zone_nr_sectors, GFP_NOIO);
 		if (ret) {
 			dmz_dev_err(dev, "Reset zone %u failed %d",
 				    dmz_id(zmd, zone), ret);
@@ -1995,7 +1956,7 @@ int dmz_copy_valid_blocks(struct dmz_metadata *zmd, struct dm_zone *from_zone,
 		dmz_release_mblock(zmd, to_mblk);
 		dmz_release_mblock(zmd, from_mblk);
 
-		chunk_block += zmd->zone_bits_per_mblk;
+		chunk_block += DMZ_BLOCK_SIZE_BITS;
 	}
 
 	to_zone->weight = from_zone->weight;
@@ -2056,7 +2017,7 @@ int dmz_validate_blocks(struct dmz_metadata *zmd, struct dm_zone *zone,
 
 		/* Set bits */
 		bit = chunk_block & DMZ_BLOCK_MASK_BITS;
-		nr_bits = min(nr_blocks, zmd->zone_bits_per_mblk - bit);
+		nr_bits = min(nr_blocks, DMZ_BLOCK_SIZE_BITS - bit);
 
 		count = dmz_set_bits((unsigned long *)mblk->data, bit, nr_bits);
 		if (count) {
@@ -2135,7 +2096,7 @@ int dmz_invalidate_blocks(struct dmz_metadata *zmd, struct dm_zone *zone,
 
 		/* Clear bits */
 		bit = chunk_block & DMZ_BLOCK_MASK_BITS;
-		nr_bits = min(nr_blocks, zmd->zone_bits_per_mblk - bit);
+		nr_bits = min(nr_blocks, DMZ_BLOCK_SIZE_BITS - bit);
 
 		count = dmz_clear_bits((unsigned long *)mblk->data,
 				       bit, nr_bits);
@@ -2195,7 +2156,6 @@ static int dmz_to_next_set_block(struct dmz_metadata *zmd, struct dm_zone *zone,
 {
 	struct dmz_mblock *mblk;
 	unsigned int bit, set_bit, nr_bits;
-	unsigned int zone_bits = zmd->zone_bits_per_mblk;
 	unsigned long *bitmap;
 	int n = 0;
 
@@ -2210,15 +2170,15 @@ static int dmz_to_next_set_block(struct dmz_metadata *zmd, struct dm_zone *zone,
 		/* Get offset */
 		bitmap = (unsigned long *) mblk->data;
 		bit = chunk_block & DMZ_BLOCK_MASK_BITS;
-		nr_bits = min(nr_blocks, zone_bits - bit);
+		nr_bits = min(nr_blocks, DMZ_BLOCK_SIZE_BITS - bit);
 		if (set)
-			set_bit = find_next_bit(bitmap, zone_bits, bit);
+			set_bit = find_next_bit(bitmap, DMZ_BLOCK_SIZE_BITS, bit);
 		else
-			set_bit = find_next_zero_bit(bitmap, zone_bits, bit);
+			set_bit = find_next_zero_bit(bitmap, DMZ_BLOCK_SIZE_BITS, bit);
 		dmz_release_mblock(zmd, mblk);
 
 		n += set_bit - bit;
-		if (set_bit < zone_bits)
+		if (set_bit < DMZ_BLOCK_SIZE_BITS)
 			break;
 
 		nr_blocks -= nr_bits;
@@ -2321,7 +2281,7 @@ static void dmz_get_zone_weight(struct dmz_metadata *zmd, struct dm_zone *zone)
 		/* Count bits in this block */
 		bitmap = mblk->data;
 		bit = chunk_block & DMZ_BLOCK_MASK_BITS;
-		nr_bits = min(nr_blocks, zmd->zone_bits_per_mblk - bit);
+		nr_bits = min(nr_blocks, DMZ_BLOCK_SIZE_BITS - bit);
 		n += dmz_count_bits(bitmap, bit, nr_bits);
 
 		dmz_release_mblock(zmd, mblk);

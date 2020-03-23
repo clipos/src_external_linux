@@ -176,6 +176,7 @@ int mmc_of_parse(struct mmc_host *host)
 	u32 bus_width, drv_type, cd_debounce_delay_ms;
 	int ret;
 	bool cd_cap_invert, cd_gpio_invert = false;
+	bool ro_cap_invert, ro_gpio_invert = false;
 
 	if (!dev || !dev_fwnode(dev))
 		return 0;
@@ -254,11 +255,9 @@ int mmc_of_parse(struct mmc_host *host)
 	}
 
 	/* Parse Write Protection */
+	ro_cap_invert = device_property_read_bool(dev, "wp-inverted");
 
-	if (device_property_read_bool(dev, "wp-inverted"))
-		host->caps2 |= MMC_CAP2_RO_ACTIVE_HIGH;
-
-	ret = mmc_gpiod_request_ro(host, "wp", 0, 0, NULL);
+	ret = mmc_gpiod_request_ro(host, "wp", 0, 0, &ro_gpio_invert);
 	if (!ret)
 		dev_info(host->parent, "Got WP GPIO\n");
 	else if (ret != -ENOENT && ret != -ENOSYS)
@@ -266,6 +265,10 @@ int mmc_of_parse(struct mmc_host *host)
 
 	if (device_property_read_bool(dev, "disable-wp"))
 		host->caps2 |= MMC_CAP2_NO_WRITE_PROTECT;
+
+	/* See the comment on CD inversion above */
+	if (ro_cap_invert ^ ro_gpio_invert)
+		host->caps2 |= MMC_CAP2_RO_ACTIVE_HIGH;
 
 	if (device_property_read_bool(dev, "cap-sd-highspeed"))
 		host->caps |= MMC_CAP_SD_HIGHSPEED;

@@ -223,8 +223,9 @@ void rxrpc_disconnect_call(struct rxrpc_call *call)
 	__rxrpc_disconnect_call(conn, call);
 	spin_unlock(&conn->channel_lock);
 
-	set_bit(RXRPC_CALL_DISCONNECTED, &call->flags);
+	call->conn = NULL;
 	conn->idle_timestamp = jiffies;
+	rxrpc_put_connection(conn);
 }
 
 /*

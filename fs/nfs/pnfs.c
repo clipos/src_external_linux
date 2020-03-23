@@ -1425,7 +1425,7 @@ retry:
 	/* lo ref dropped in pnfs_roc_release() */
 	layoutreturn = pnfs_prepare_layoutreturn(lo, &stateid, &iomode);
 	/* If the creds don't match, we can't compound the layoutreturn */
-	if (!layoutreturn || cred_fscmp(cred, lo->plh_lc_cred) != 0)
+	if (!layoutreturn || cred != lo->plh_lc_cred)
 		goto out_noroc;
 
 	roc = layoutreturn;
@@ -2159,8 +2159,6 @@ out_unlock:
 	pnfs_put_layout_hdr(lo);
 	return NULL;
 }
-
-extern const nfs4_stateid current_stateid;
 
 static void _lgopen_prepare_attached(struct nfs4_opendata *data,
 				     struct nfs_open_context *ctx)

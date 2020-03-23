@@ -2382,10 +2382,10 @@ static int nfs4_show_open(struct seq_file *s, struct nfs4_stid *st)
 	access = bmap_to_share_mode(ols->st_access_bmap);
 	deny   = bmap_to_share_mode(ols->st_deny_bmap);
 
-	seq_printf(s, "access: \%s\%s, ",
+	seq_printf(s, "access: %s%s, ",
 		access & NFS4_SHARE_ACCESS_READ ? "r" : "-",
 		access & NFS4_SHARE_ACCESS_WRITE ? "w" : "-");
-	seq_printf(s, "deny: \%s\%s, ",
+	seq_printf(s, "deny: %s%s, ",
 		deny & NFS4_SHARE_ACCESS_READ ? "r" : "-",
 		deny & NFS4_SHARE_ACCESS_WRITE ? "w" : "-");
 
@@ -6550,7 +6550,7 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	}
 
 	if (fl_flags & FL_SLEEP) {
-		nbl->nbl_time = get_seconds();
+		nbl->nbl_time = jiffies;
 		spin_lock(&nn->blocked_locks_lock);
 		list_add_tail(&nbl->nbl_list, &lock_sop->lo_blocked);
 		list_add_tail(&nbl->nbl_lru, &nn->blocked_locks_lru);

@@ -1418,7 +1418,6 @@ static ssize_t ceph_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	struct ceph_cap_flush *prealloc_cf;
 	ssize_t count, written = 0;
 	int err, want, got;
-	bool direct_lock = false;
 	loff_t pos;
 	loff_t limit = max(i_size_read(inode), fsc->max_file_size);
 
@@ -1429,11 +1428,8 @@ static ssize_t ceph_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	if (!prealloc_cf)
 		return -ENOMEM;
 
-	if ((iocb->ki_flags & (IOCB_DIRECT | IOCB_APPEND)) == IOCB_DIRECT)
-		direct_lock = true;
-
 retry_snap:
-	if (direct_lock)
+	if (iocb->ki_flags & IOCB_DIRECT)
 		ceph_start_io_direct(inode);
 	else
 		ceph_start_io_write(inode);
@@ -1523,15 +1519,14 @@ retry_snap:
 
 		/* we might need to revert back to that point */
 		data = *from;
-		if (iocb->ki_flags & IOCB_DIRECT)
+		if (iocb->ki_flags & IOCB_DIRECT) {
 			written = ceph_direct_read_write(iocb, &data, snapc,
 							 &prealloc_cf);
-		else
-			written = ceph_sync_write(iocb, &data, pos, snapc);
-		if (direct_lock)
 			ceph_end_io_direct(inode);
-		else
+		} else {
+			written = ceph_sync_write(iocb, &data, pos, snapc);
 			ceph_end_io_write(inode);
+		}
 		if (written > 0)
 			iov_iter_advance(from, written);
 		ceph_put_snap_context(snapc);
@@ -1582,7 +1577,7 @@ retry_snap:
 
 	goto out_unlocked;
 out:
-	if (direct_lock)
+	if (iocb->ki_flags & IOCB_DIRECT)
 		ceph_end_io_direct(inode);
 	else
 		ceph_end_io_write(inode);

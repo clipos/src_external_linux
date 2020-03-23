@@ -1223,11 +1223,32 @@ global_port_update:
 		break;
 
 	case MBA_IDC_AEN:
-		mb[4] = RD_REG_WORD(&reg24->mailbox4);
-		mb[5] = RD_REG_WORD(&reg24->mailbox5);
-		mb[6] = RD_REG_WORD(&reg24->mailbox6);
-		mb[7] = RD_REG_WORD(&reg24->mailbox7);
-		qla83xx_handle_8200_aen(vha, mb);
+		if (IS_QLA27XX(ha) || IS_QLA28XX(ha)) {
+			ha->flags.fw_init_done = 0;
+			ql_log(ql_log_warn, vha, 0xffff,
+			    "MPI Heartbeat stop. Chip reset needed. MB0[%xh] MB1[%xh] MB2[%xh] MB3[%xh]\n",
+			    mb[0], mb[1], mb[2], mb[3]);
+
+			if ((mb[1] & BIT_8) ||
+			    (mb[2] & BIT_8)) {
+				ql_log(ql_log_warn, vha, 0xd013,
+				    "MPI Heartbeat stop. FW dump needed\n");
+				ha->fw_dump_mpi = 1;
+				ha->isp_ops->fw_dump(vha, 1);
+			}
+			set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
+			qla2xxx_wake_dpc(vha);
+		} else if (IS_QLA83XX(ha)) {
+			mb[4] = RD_REG_WORD(&reg24->mailbox4);
+			mb[5] = RD_REG_WORD(&reg24->mailbox5);
+			mb[6] = RD_REG_WORD(&reg24->mailbox6);
+			mb[7] = RD_REG_WORD(&reg24->mailbox7);
+			qla83xx_handle_8200_aen(vha, mb);
+		} else {
+			ql_dbg(ql_dbg_async, vha, 0x5052,
+			    "skip Heartbeat processing mb0-3=[0x%04x] [0x%04x] [0x%04x] [0x%04x]\n",
+			    mb[0], mb[1], mb[2], mb[3]);
+		}
 		break;
 
 	case MBA_DPORT_DIAGNOSTICS:
@@ -1897,18 +1918,6 @@ static void qla24xx_nvme_iocb_entry(scsi_qla_host_t *vha, struct req_que *req,
 		inbuf = (uint32_t *)&sts->nvme_ersp_data;
 		outbuf = (uint32_t *)fd->rspaddr;
 		iocb->u.nvme.rsp_pyld_len = le16_to_cpu(sts->nvme_rsp_pyld_len);
-		if (unlikely(iocb->u.nvme.rsp_pyld_len >
-		    sizeof(struct nvme_fc_ersp_iu))) {
-			if (ql_mask_match(ql_dbg_io)) {
-				WARN_ONCE(1, "Unexpected response payload length %u.\n",
-				    iocb->u.nvme.rsp_pyld_len);
-				ql_log(ql_log_warn, fcport->vha, 0x5100,
-				    "Unexpected response payload length %u.\n",
-				    iocb->u.nvme.rsp_pyld_len);
-			}
-			iocb->u.nvme.rsp_pyld_len =
-			    sizeof(struct nvme_fc_ersp_iu);
-		}
 		iter = iocb->u.nvme.rsp_pyld_len >> 2;
 		for (; iter; iter--)
 			*outbuf++ = swab32(*inbuf++);

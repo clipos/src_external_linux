@@ -97,10 +97,8 @@ static void vfio_pci_nvgpu_release(struct vfio_pci_device *vdev,
 
 	/* If there were any mappings at all... */
 	if (data->mm) {
-		if (data->mem) {
-			ret = mm_iommu_put(data->mm, data->mem);
-			WARN_ON(ret);
-		}
+		ret = mm_iommu_put(data->mm, data->mem);
+		WARN_ON(ret);
 
 		mmdrop(data->mm);
 	}

@@ -3206,9 +3206,8 @@ static void ipw2100_tx_send_data(struct ipw2100_priv *priv)
 	}
 }
 
-static void ipw2100_irq_tasklet(unsigned long data)
+static void ipw2100_irq_tasklet(struct ipw2100_priv *priv)
 {
-	struct ipw2100_priv *priv = (struct ipw2100_priv *)data;
 	struct net_device *dev = priv->net_dev;
 	unsigned long flags;
 	u32 inta, tmp;
@@ -5566,7 +5565,7 @@ static void shim__set_security(struct net_device *dev,
 			       struct libipw_security *sec)
 {
 	struct ipw2100_priv *priv = libipw_priv(dev);
-	int i, force_update = 0;
+	int i;
 
 	mutex_lock(&priv->action_mutex);
 	if (!(priv->status & STATUS_INITIALIZED))
@@ -5606,7 +5605,6 @@ static void shim__set_security(struct net_device *dev,
 		priv->ieee->sec.flags |= SEC_ENABLED;
 		priv->ieee->sec.enabled = sec->enabled;
 		priv->status |= STATUS_SECURITY_UPDATED;
-		force_update = 1;
 	}
 
 	if (sec->flags & SEC_ENCRYPT)
@@ -6008,7 +6006,7 @@ static void ipw2100_rf_kill(struct work_struct *work)
 	spin_unlock_irqrestore(&priv->low_lock, flags);
 }
 
-static void ipw2100_irq_tasklet(unsigned long data);
+static void ipw2100_irq_tasklet(struct ipw2100_priv *priv);
 
 static const struct net_device_ops ipw2100_netdev_ops = {
 	.ndo_open		= ipw2100_open,
@@ -6138,7 +6136,7 @@ static struct net_device *ipw2100_alloc_device(struct pci_dev *pci_dev,
 	INIT_DELAYED_WORK(&priv->rf_kill, ipw2100_rf_kill);
 	INIT_DELAYED_WORK(&priv->scan_event, ipw2100_scan_event);
 
-	tasklet_init(&priv->irq_tasklet,
+	tasklet_init(&priv->irq_tasklet, (void (*)(unsigned long))
 		     ipw2100_irq_tasklet, (unsigned long)priv);
 
 	/* NOTE:  We do not start the deferred work for status checks yet */

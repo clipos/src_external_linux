@@ -202,7 +202,7 @@ static int wdat_wdt_enable_reboot(struct wdat_wdt *wdat)
 	 * WDAT specification says that the watchdog is required to reboot
 	 * the system when it fires. However, it also states that it is
 	 * recommeded to make it configurable through hardware register. We
-	 * enable reboot now if it is configrable, just in case.
+	 * enable reboot now if it is configurable, just in case.
 	 */
 	ret = wdat_wdt_run_action(wdat, ACPI_WDAT_SET_REBOOT, 0, NULL);
 	if (ret && ret != -EOPNOTSUPP) {
@@ -389,7 +389,7 @@ static int wdat_wdt_probe(struct platform_device *pdev)
 
 		memset(&r, 0, sizeof(r));
 		r.start = gas->address;
-		r.end = r.start + ACPI_ACCESS_BYTE_WIDTH(gas->access_width) - 1;
+		r.end = r.start + gas->access_width - 1;
 		if (gas->space_id == ACPI_ADR_SPACE_SYSTEM_MEMORY) {
 			r.flags = IORESOURCE_MEM;
 		} else if (gas->space_id == ACPI_ADR_SPACE_SYSTEM_IO) {
