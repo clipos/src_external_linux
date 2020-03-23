@@ -168,7 +168,7 @@ void hda_dsp_dump_skl(struct snd_sof_dev *sdev, u32 flags)
 	panic = snd_sof_dsp_read(sdev, HDA_DSP_BAR,
 				 HDA_ADSP_ERROR_CODE_SKL + 0x4);
 
-	if (sdev->boot_complete) {
+	if (sdev->fw_state == SOF_FW_BOOT_COMPLETE) {
 		hda_dsp_get_registers(sdev, &xoops, &panic_info, stack,
 				      HDA_DSP_STACK_DUMP_SIZE);
 		snd_sof_get_status(sdev, status, panic, &xoops, &panic_info,
@@ -195,7 +195,7 @@ void hda_dsp_dump(struct snd_sof_dev *sdev, u32 flags)
 				  HDA_DSP_SRAM_REG_FW_STATUS);
 	panic = snd_sof_dsp_read(sdev, HDA_DSP_BAR, HDA_DSP_SRAM_REG_FW_TRACEP);
 
-	if (sdev->boot_complete) {
+	if (sdev->fw_state == SOF_FW_BOOT_COMPLETE) {
 		hda_dsp_get_registers(sdev, &xoops, &panic_info, stack,
 				      HDA_DSP_STACK_DUMP_SIZE);
 		snd_sof_get_status(sdev, status, panic, &xoops, &panic_info,
@@ -351,7 +351,7 @@ static int hda_init_caps(struct snd_sof_dev *sdev)
 	const char *tplg_filename;
 	const char *idisp_str;
 	const char *dmic_str;
-	int dmic_num;
+	int dmic_num = 0;
 	int codec_num = 0;
 	int i;
 #endif
@@ -472,6 +472,7 @@ static int hda_init_caps(struct snd_sof_dev *sdev)
 		mach_params->codec_mask = bus->codec_mask;
 		mach_params->platform = dev_name(sdev->dev);
 		mach_params->common_hdmi_codec_drv = hda_codec_use_common_hdmi;
+		mach_params->dmic_num = dmic_num;
 	}
 
 	/* create codec instances */
@@ -497,6 +498,49 @@ static const struct sof_intel_dsp_desc
 	chip_info = desc->chip_info;
 
 	return chip_info;
+}
+
+static irqreturn_t hda_dsp_interrupt_handler(int irq, void *context)
+{
+	struct snd_sof_dev *sdev = context;
+
+	/*
+	 * Get global interrupt status. It includes all hardware interrupt
+	 * sources in the Intel HD Audio controller.
+	 */
+	if (snd_sof_dsp_read(sdev, HDA_DSP_HDA_BAR, SOF_HDA_INTSTS) &
+	    SOF_HDA_INTSTS_GIS) {
+
+		/* disable GIE interrupt */
+		snd_sof_dsp_update_bits(sdev, HDA_DSP_HDA_BAR,
+					SOF_HDA_INTCTL,
+					SOF_HDA_INT_GLOBAL_EN,
+					0);
+
+		return IRQ_WAKE_THREAD;
+	}
+
+	return IRQ_NONE;
+}
+
+static irqreturn_t hda_dsp_interrupt_thread(int irq, void *context)
+{
+	struct snd_sof_dev *sdev = context;
+
+	/* deal with streams and controller first */
+	if (hda_dsp_check_stream_irq(sdev))
+		hda_dsp_stream_threaded_handler(irq, sdev);
+
+	if (hda_dsp_check_ipc_irq(sdev))
+		sof_ops(sdev)->irq_thread(irq, sdev);
+
+	/* enable GIE interrupt */
+	snd_sof_dsp_update_bits(sdev, HDA_DSP_HDA_BAR,
+				SOF_HDA_INTCTL,
+				SOF_HDA_INT_GLOBAL_EN,
+				SOF_HDA_INT_GLOBAL_EN);
+
+	return IRQ_HANDLED;
 }
 
 int hda_dsp_probe(struct snd_sof_dev *sdev)
@@ -603,9 +647,7 @@ int hda_dsp_probe(struct snd_sof_dev *sdev)
 	 */
 	if (hda_use_msi && pci_alloc_irq_vectors(pci, 1, 1, PCI_IRQ_MSI) > 0) {
 		dev_info(sdev->dev, "use msi interrupt mode\n");
-		hdev->irq = pci_irq_vector(pci, 0);
-		/* ipc irq number is the same of hda irq */
-		sdev->ipc_irq = hdev->irq;
+		sdev->ipc_irq = pci_irq_vector(pci, 0);
 		/* initialised to "false" by kzalloc() */
 		sdev->msi_enabled = true;
 	}
@@ -616,28 +658,17 @@ int hda_dsp_probe(struct snd_sof_dev *sdev)
 		 * in IO-APIC mode, hda->irq and ipc_irq are using the same
 		 * irq number of pci->irq
 		 */
-		hdev->irq = pci->irq;
 		sdev->ipc_irq = pci->irq;
 	}
 
-	dev_dbg(sdev->dev, "using HDA IRQ %d\n", hdev->irq);
-	ret = request_threaded_irq(hdev->irq, hda_dsp_stream_interrupt,
-				   hda_dsp_stream_threaded_handler,
-				   IRQF_SHARED, "AudioHDA", bus);
-	if (ret < 0) {
-		dev_err(sdev->dev, "error: failed to register HDA IRQ %d\n",
-			hdev->irq);
-		goto free_irq_vector;
-	}
-
 	dev_dbg(sdev->dev, "using IPC IRQ %d\n", sdev->ipc_irq);
-	ret = request_threaded_irq(sdev->ipc_irq, hda_dsp_ipc_irq_handler,
-				   sof_ops(sdev)->irq_thread, IRQF_SHARED,
-				   "AudioDSP", sdev);
+	ret = request_threaded_irq(sdev->ipc_irq, hda_dsp_interrupt_handler,
+				   hda_dsp_interrupt_thread,
+				   IRQF_SHARED, "AudioDSP", sdev);
 	if (ret < 0) {
 		dev_err(sdev->dev, "error: failed to register IPC IRQ %d\n",
 			sdev->ipc_irq);
-		goto free_hda_irq;
+		goto free_irq_vector;
 	}
 
 	pci_set_master(pci);
@@ -668,8 +699,6 @@ int hda_dsp_probe(struct snd_sof_dev *sdev)
 
 free_ipc_irq:
 	free_irq(sdev->ipc_irq, sdev);
-free_hda_irq:
-	free_irq(hdev->irq, bus);
 free_irq_vector:
 	if (sdev->msi_enabled)
 		pci_free_irq_vectors(pci);
@@ -715,7 +744,6 @@ int hda_dsp_remove(struct snd_sof_dev *sdev)
 				SOF_HDA_PPCTL_GPROCEN, 0);
 
 	free_irq(sdev->ipc_irq, sdev);
-	free_irq(hda->irq, bus);
 	if (sdev->msi_enabled)
 		pci_free_irq_vectors(pci);
 

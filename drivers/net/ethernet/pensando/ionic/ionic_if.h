@@ -862,7 +862,7 @@ struct ionic_rxq_comp {
 #define IONIC_RXQ_COMP_CSUM_F_VLAN	0x40
 #define IONIC_RXQ_COMP_CSUM_F_CALC	0x80
 	u8     pkt_type_color;
-#define IONIC_RXQ_COMP_PKT_TYPE_MASK	0x0f
+#define IONIC_RXQ_COMP_PKT_TYPE_MASK	0x7f
 };
 
 enum ionic_pkt_type {
@@ -2348,6 +2348,7 @@ union ionic_dev_info_regs {
 		u8     version;
 		u8     asic_type;
 		u8     asic_rev;
+#define IONIC_FW_STS_F_RUNNING	0x1
 		u8     fw_status;
 		u32    fw_heartbeat;
 		char   fw_version[IONIC_DEVINFO_FWVERS_BUFLEN];

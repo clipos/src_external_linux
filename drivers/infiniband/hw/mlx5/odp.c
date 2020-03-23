@@ -197,7 +197,8 @@ static void free_implicit_child_mr(struct mlx5_ib_mr *mr, bool need_imr_xlt)
 	mr->parent = NULL;
 	mlx5_mr_cache_free(mr->dev, mr);
 	ib_umem_odp_release(odp);
-	atomic_dec(&imr->num_deferred_work);
+	if (atomic_dec_and_test(&imr->num_deferred_work))
+		wake_up(&imr->q_deferred_work);
 }
 
 static void free_implicit_child_mr_work(struct work_struct *work)
@@ -516,6 +517,7 @@ struct mlx5_ib_mr *mlx5_ib_alloc_implicit_mr(struct mlx5_ib_pd *pd,
 	imr->umem = &umem_odp->umem;
 	imr->is_odp_implicit = true;
 	atomic_set(&imr->num_deferred_work, 0);
+	init_waitqueue_head(&imr->q_deferred_work);
 	xa_init(&imr->implicit_children);
 
 	err = mlx5_ib_update_xlt(imr, 0,
@@ -573,10 +575,7 @@ void mlx5_ib_free_implicit_mr(struct mlx5_ib_mr *imr)
 	 * under xa_lock while the child is in the xarray. Thus at this point
 	 * it is only decreasing, and all work holding it is now on the wq.
 	 */
-	if (atomic_read(&imr->num_deferred_work)) {
-		flush_workqueue(system_unbound_wq);
-		WARN_ON(atomic_read(&imr->num_deferred_work));
-	}
+	wait_event(imr->q_deferred_work, !atomic_read(&imr->num_deferred_work));
 
 	/*
 	 * Fence the imr before we destroy the children. This allows us to
@@ -607,10 +606,7 @@ void mlx5_ib_fence_odp_mr(struct mlx5_ib_mr *mr)
 	/* Wait for all running page-fault handlers to finish. */
 	synchronize_srcu(&mr->dev->odp_srcu);
 
-	if (atomic_read(&mr->num_deferred_work)) {
-		flush_workqueue(system_unbound_wq);
-		WARN_ON(atomic_read(&mr->num_deferred_work));
-	}
+	wait_event(mr->q_deferred_work, !atomic_read(&mr->num_deferred_work));
 
 	dma_fence_odp_mr(mr);
 }
@@ -624,11 +620,10 @@ static int pagefault_real_mr(struct mlx5_ib_mr *mr, struct ib_umem_odp *odp,
 	bool downgrade = flags & MLX5_PF_FLAGS_DOWNGRADE;
 	unsigned long current_seq;
 	u64 access_mask;
-	u64 start_idx, page_mask;
+	u64 start_idx;
 
 	page_shift = odp->page_shift;
-	page_mask = ~(BIT(page_shift) - 1);
-	start_idx = (user_va - (mr->mmkey.iova & page_mask)) >> page_shift;
+	start_idx = (user_va - ib_umem_start(odp)) >> page_shift;
 	access_mask = ODP_READ_ALLOWED_BIT;
 
 	if (odp->umem.writable && !downgrade)
@@ -767,11 +762,19 @@ static int pagefault_mr(struct mlx5_ib_mr *mr, u64 io_virt, size_t bcnt,
 {
 	struct ib_umem_odp *odp = to_ib_umem_odp(mr->umem);
 
+	if (unlikely(io_virt < mr->mmkey.iova))
+		return -EFAULT;
+
 	if (!odp->is_implicit_odp) {
-		if (unlikely(io_virt < ib_umem_start(odp) ||
-			     ib_umem_end(odp) - io_virt < bcnt))
+		u64 user_va;
+
+		if (check_add_overflow(io_virt - mr->mmkey.iova,
+				       (u64)odp->umem.address, &user_va))
 			return -EFAULT;
-		return pagefault_real_mr(mr, odp, io_virt, bcnt, bytes_mapped,
+		if (unlikely(user_va >= ib_umem_end(odp) ||
+			     ib_umem_end(odp) - user_va < bcnt))
+			return -EFAULT;
+		return pagefault_real_mr(mr, odp, user_va, bcnt, bytes_mapped,
 					 flags);
 	}
 	return pagefault_implicit_mr(mr, odp, io_virt, bcnt, bytes_mapped,
@@ -1675,7 +1678,8 @@ static void destroy_prefetch_work(struct prefetch_mr_work *work)
 	u32 i;
 
 	for (i = 0; i < work->num_sge; ++i)
-		atomic_dec(&work->frags[i].mr->num_deferred_work);
+		if (atomic_dec_and_test(&work->frags[i].mr->num_deferred_work))
+			wake_up(&work->frags[i].mr->q_deferred_work);
 	kvfree(work);
 }
 

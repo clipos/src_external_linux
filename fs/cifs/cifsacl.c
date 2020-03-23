@@ -601,7 +601,7 @@ static void access_flags_to_mode(__le32 ace_flags, int type, umode_t *pmode,
 			((flags & FILE_EXEC_RIGHTS) == FILE_EXEC_RIGHTS))
 		*pmode |= (S_IXUGO & (*pbits_to_set));
 
-	cifs_dbg(NOISY, "access flags 0x%x mode now 0x%x\n", flags, *pmode);
+	cifs_dbg(NOISY, "access flags 0x%x mode now %04o\n", flags, *pmode);
 	return;
 }
 
@@ -630,7 +630,7 @@ static void mode_to_access_flags(umode_t mode, umode_t bits_to_use,
 	if (mode & S_IXUGO)
 		*pace_flags |= SET_FILE_EXEC_RIGHTS;
 
-	cifs_dbg(NOISY, "mode: 0x%x, access flags now 0x%x\n",
+	cifs_dbg(NOISY, "mode: %04o, access flags now 0x%x\n",
 		 mode, *pace_flags);
 	return;
 }
@@ -800,6 +800,26 @@ static void parse_dacl(struct cifs_acl *pdacl, char *end_of_acl,
 	}
 
 	return;
+}
+
+unsigned int setup_authusers_ACE(struct cifs_ace *pntace)
+{
+	int i;
+	unsigned int ace_size = 20;
+
+	pntace->type = ACCESS_ALLOWED_ACE_TYPE;
+	pntace->flags = 0x0;
+	pntace->access_req = cpu_to_le32(GENERIC_ALL);
+	pntace->sid.num_subauth = 1;
+	pntace->sid.revision = 1;
+	for (i = 0; i < NUM_AUTHS; i++)
+		pntace->sid.authority[i] =  sid_authusers.authority[i];
+
+	pntace->sid.sub_auth[0] =  sid_authusers.sub_auth[0];
+
+	/* size = 1 + 1 + 2 + 4 + 1 + 1 + 6 + (psid->num_subauth*4) */
+	pntace->size = cpu_to_le16(ace_size);
+	return ace_size;
 }
 
 /*
