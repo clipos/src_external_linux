@@ -27,8 +27,6 @@ MODULE_PARM_DESC(gpio_reset, "gpio number for reset. -1 for none.");
 #define SET_WRITE 0x7FFF        /* usage: and operation */
 #define SET_READ 0x8000         /* usage: or operation */
 
-#define WFX_RESET_INVERTED 1
-
 static const struct wfx_platform_data wfx_spi_pdata = {
 	.file_fw = "wfm_wf200",
 	.file_pds = "wf200.pds",
@@ -109,6 +107,8 @@ static int wfx_spi_copy_to_io(void *priv, unsigned int addr,
 
 	cpu_to_le16s(&regaddr);
 
+	// Register address and CONFIG content always use 16bit big endian
+	// ("BADC" order)
 	if (bus->need_swab)
 		swab16s(&regaddr);
 	if (bus->need_swab && addr == WFX_REG_CONFIG)
@@ -154,11 +154,6 @@ static void wfx_spi_request_rx(struct work_struct *work)
 	wfx_bh_request_rx(bus->core);
 }
 
-static void wfx_flush_irq_work(void *w)
-{
-	flush_work(w);
-}
-
 static size_t wfx_spi_align_size(void *priv, size_t size)
 {
 	// Most of SPI controllers avoid DMA if buffer size is not 32bit aligned
@@ -190,7 +185,7 @@ static int wfx_spi_probe(struct spi_device *func)
 	if (func->bits_per_word != 16 && func->bits_per_word != 8)
 		dev_warn(&func->dev, "unusual bits/word value: %d\n",
 			 func->bits_per_word);
-	if (func->max_speed_hz > 49000000)
+	if (func->max_speed_hz > 50000000)
 		dev_warn(&func->dev, "%dHz is a very high speed\n",
 			 func->max_speed_hz);
 
@@ -206,13 +201,16 @@ static int wfx_spi_probe(struct spi_device *func)
 	if (!bus->gpio_reset) {
 		dev_warn(&func->dev, "try to load firmware anyway\n");
 	} else {
-		if (spi_get_device_id(func)->driver_data & WFX_RESET_INVERTED)
-			gpiod_toggle_active_low(bus->gpio_reset);
-		gpiod_set_value(bus->gpio_reset, 1);
-		udelay(100);
 		gpiod_set_value(bus->gpio_reset, 0);
+		udelay(100);
+		gpiod_set_value(bus->gpio_reset, 1);
 		udelay(2000);
 	}
+
+	ret = devm_request_irq(&func->dev, func->irq, wfx_spi_irq_handler,
+			       IRQF_TRIGGER_RISING, "wfx", bus);
+	if (ret)
+		return ret;
 
 	INIT_WORK(&bus->request_rx, wfx_spi_request_rx);
 	bus->core = wfx_init_common(&func->dev, &wfx_spi_pdata,
@@ -220,25 +218,23 @@ static int wfx_spi_probe(struct spi_device *func)
 	if (!bus->core)
 		return -EIO;
 
-	ret = devm_add_action_or_reset(&func->dev, wfx_flush_irq_work,
-				       &bus->request_rx);
+	ret = wfx_probe(bus->core);
 	if (ret)
-		return ret;
+		wfx_free_common(bus->core);
 
-	ret = devm_request_irq(&func->dev, func->irq, wfx_spi_irq_handler,
-			       IRQF_TRIGGER_RISING, "wfx", bus);
-	if (ret)
-		return ret;
-
-	return wfx_probe(bus->core);
+	return ret;
 }
 
-/* Disconnect Function to be called by SPI stack when device is disconnected */
-static int wfx_spi_disconnect(struct spi_device *func)
+static int wfx_spi_remove(struct spi_device *func)
 {
 	struct wfx_spi_priv *bus = spi_get_drvdata(func);
 
 	wfx_release(bus->core);
+	wfx_free_common(bus->core);
+	// A few IRQ will be sent during device release. Hopefully, no IRQ
+	// should happen after wdev/wvif are released.
+	devm_free_irq(&func->dev, func->irq, bus);
+	flush_work(&bus->request_rx);
 	return 0;
 }
 
@@ -248,16 +244,14 @@ static int wfx_spi_disconnect(struct spi_device *func)
  * stripped.
  */
 static const struct spi_device_id wfx_spi_id[] = {
-	{ "wfx-spi", WFX_RESET_INVERTED },
-	{ "wf200", 0 },
+	{ "wfx-spi", 0 },
 	{ },
 };
 MODULE_DEVICE_TABLE(spi, wfx_spi_id);
 
 #ifdef CONFIG_OF
 static const struct of_device_id wfx_spi_of_match[] = {
-	{ .compatible = "silabs,wfx-spi", .data = (void *)WFX_RESET_INVERTED },
-	{ .compatible = "silabs,wf200" },
+	{ .compatible = "silabs,wfx-spi" },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, wfx_spi_of_match);
@@ -270,5 +264,5 @@ struct spi_driver wfx_spi_driver = {
 	},
 	.id_table = wfx_spi_id,
 	.probe = wfx_spi_probe,
-	.remove = wfx_spi_disconnect,
+	.remove = wfx_spi_remove,
 };
