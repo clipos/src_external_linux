@@ -273,7 +273,6 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
 		goto err;
 
 	mm->stack_vm = mm->total_vm = 1;
-	arch_bprm_mm_init(mm, vma);
 	up_write(&mm->mmap_sem);
 	bprm->p = vma->vm_end - sizeof(void *);
 	if (randomize_va_space)
@@ -763,6 +762,11 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	if (ret)
 		goto out_unlock;
 	BUG_ON(prev != vma);
+
+	if (unlikely(vm_flags & VM_EXEC)) {
+		pr_warn_once("process '%pD4' started with executable stack\n",
+			     bprm->file);
+	}
 
 	/* Move stack pages down in memory. */
 	if (stack_shift) {

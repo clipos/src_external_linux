@@ -184,7 +184,6 @@ void memcg_deactivate_kmem_caches(struct mem_cgroup *, struct mem_cgroup *);
 /*
  * Common kmalloc functions provided by all allocators
  */
-void * __must_check __krealloc(const void *, size_t, gfp_t) __attribute__((alloc_size(2)));
 void * __must_check krealloc(const void *, size_t, gfp_t) __attribute((alloc_size(2)));
 void kfree(const void *);
 void kzfree(const void *);
