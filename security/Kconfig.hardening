@@ -208,6 +208,7 @@ config PAGE_SANITIZE_VERIFY
 config SLAB_SANITIZE_VERIFY
 	default y
 	bool "Verify sanitized SLAB allocations"
+	depends on !KASAN
 	help
 	  When init_on_free is enabled, verify that newly allocated slab
 	  objects are zeroed to detect write-after-free bugs.
