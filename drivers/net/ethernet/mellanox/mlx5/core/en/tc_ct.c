@@ -320,21 +320,21 @@ mlx5_tc_ct_parse_mangle_to_mod_act(struct flow_action_entry *act,
 
 	case FLOW_ACT_MANGLE_HDR_TYPE_IP6:
 		MLX5_SET(set_action_in, modact, length, 0);
-		if (offset == offsetof(struct ipv6hdr, saddr))
+		if (offset == offsetof(struct ipv6hdr, saddr) + 12)
 			field = MLX5_ACTION_IN_FIELD_OUT_SIPV6_31_0;
-		else if (offset == offsetof(struct ipv6hdr, saddr) + 4)
-			field = MLX5_ACTION_IN_FIELD_OUT_SIPV6_63_32;
 		else if (offset == offsetof(struct ipv6hdr, saddr) + 8)
+			field = MLX5_ACTION_IN_FIELD_OUT_SIPV6_63_32;
+		else if (offset == offsetof(struct ipv6hdr, saddr) + 4)
 			field = MLX5_ACTION_IN_FIELD_OUT_SIPV6_95_64;
-		else if (offset == offsetof(struct ipv6hdr, saddr) + 12)
+		else if (offset == offsetof(struct ipv6hdr, saddr))
 			field = MLX5_ACTION_IN_FIELD_OUT_SIPV6_127_96;
-		else if (offset == offsetof(struct ipv6hdr, daddr))
-			field = MLX5_ACTION_IN_FIELD_OUT_DIPV6_31_0;
-		else if (offset == offsetof(struct ipv6hdr, daddr) + 4)
-			field = MLX5_ACTION_IN_FIELD_OUT_DIPV6_63_32;
-		else if (offset == offsetof(struct ipv6hdr, daddr) + 8)
-			field = MLX5_ACTION_IN_FIELD_OUT_DIPV6_95_64;
 		else if (offset == offsetof(struct ipv6hdr, daddr) + 12)
+			field = MLX5_ACTION_IN_FIELD_OUT_DIPV6_31_0;
+		else if (offset == offsetof(struct ipv6hdr, daddr) + 8)
+			field = MLX5_ACTION_IN_FIELD_OUT_DIPV6_63_32;
+		else if (offset == offsetof(struct ipv6hdr, daddr) + 4)
+			field = MLX5_ACTION_IN_FIELD_OUT_DIPV6_95_64;
+		else if (offset == offsetof(struct ipv6hdr, daddr))
 			field = MLX5_ACTION_IN_FIELD_OUT_DIPV6_127_96;
 		else
 			return -EOPNOTSUPP;
@@ -849,6 +849,7 @@ mlx5_tc_ct_flush_ft_entry(void *ptr, void *arg)
 	struct mlx5_ct_entry *entry = ptr;
 
 	mlx5_tc_ct_entry_del_rules(ct_priv, entry);
+	kfree(entry);
 }
 
 static void
@@ -1132,7 +1133,7 @@ mlx5_tc_ct_flow_offload(struct mlx5e_priv *priv,
 {
 	bool clear_action = attr->ct_attr.ct_action & TCA_CT_ACT_CLEAR;
 	struct mlx5_tc_ct_priv *ct_priv = mlx5_tc_ct_get_ct_priv(priv);
-	struct mlx5_flow_handle *rule;
+	struct mlx5_flow_handle *rule = ERR_PTR(-EINVAL);
 	int err;
 
 	if (!ct_priv)

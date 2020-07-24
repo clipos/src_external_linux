@@ -1137,9 +1137,12 @@ static void __setup_root(struct btrfs_root *root, struct btrfs_fs_info *fs_info,
 	root->log_transid = 0;
 	root->log_transid_committed = -1;
 	root->last_log_commit = 0;
-	if (!dummy)
+	if (!dummy) {
 		extent_io_tree_init(fs_info, &root->dirty_log_pages,
 				    IO_TREE_ROOT_DIRTY_LOG_PAGES, NULL);
+		extent_io_tree_init(fs_info, &root->log_csum_range,
+				    IO_TREE_LOG_CSUM_RANGE, NULL);
+	}
 
 	memset(&root->root_key, 0, sizeof(root->root_key));
 	memset(&root->root_item, 0, sizeof(root->root_item));
@@ -2580,10 +2583,12 @@ static int __cold init_tree_roots(struct btrfs_fs_info *fs_info)
 		    !extent_buffer_uptodate(tree_root->node)) {
 			handle_error = true;
 
-			if (IS_ERR(tree_root->node))
+			if (IS_ERR(tree_root->node)) {
 				ret = PTR_ERR(tree_root->node);
-			else if (!extent_buffer_uptodate(tree_root->node))
+				tree_root->node = NULL;
+			} else if (!extent_buffer_uptodate(tree_root->node)) {
 				ret = -EUCLEAN;
+			}
 
 			btrfs_warn(fs_info, "failed to read tree root");
 			continue;
