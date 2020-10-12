@@ -87,22 +87,22 @@ static struct { unsigned flag:8; char opt_char; } opt_array[] = {
 	{ _DPRINTK_FLAGS_NONE, '_' },
 };
 
-struct flagsbuf { char buf[ARRAY_SIZE(opt_array)+1]; };
-
 /* format a string into buf[] which describes the _ddebug's flags */
-static char *ddebug_describe_flags(unsigned int flags, struct flagsbuf *fb)
+static char *ddebug_describe_flags(struct _ddebug *dp, char *buf,
+				    size_t maxlen)
 {
-	char *p = fb->buf;
+	char *p = buf;
 	int i;
 
+	BUG_ON(maxlen < 6);
 	for (i = 0; i < ARRAY_SIZE(opt_array); ++i)
-		if (flags & opt_array[i].flag)
+		if (dp->flags & opt_array[i].flag)
 			*p++ = opt_array[i].opt_char;
-	if (p == fb->buf)
+	if (p == buf)
 		*p++ = '_';
 	*p = '\0';
 
-	return fb->buf;
+	return buf;
 }
 
 #define vpr_info(fmt, ...)					\
@@ -144,7 +144,7 @@ static int ddebug_change(const struct ddebug_query *query,
 	struct ddebug_table *dt;
 	unsigned int newflags;
 	unsigned int nfound = 0;
-	struct flagsbuf fbuf;
+	char flagbuf[10];
 
 	/* search for matching ddebugs */
 	mutex_lock(&ddebug_lock);
@@ -201,7 +201,8 @@ static int ddebug_change(const struct ddebug_query *query,
 			vpr_info("changed %s:%d [%s]%s =%s\n",
 				 trim_prefix(dp->filename), dp->lineno,
 				 dt->mod_name, dp->function,
-				 ddebug_describe_flags(dp->flags, &fbuf));
+				 ddebug_describe_flags(dp, flagbuf,
+						       sizeof(flagbuf)));
 		}
 	}
 	mutex_unlock(&ddebug_lock);
@@ -815,7 +816,7 @@ static int ddebug_proc_show(struct seq_file *m, void *p)
 {
 	struct ddebug_iter *iter = m->private;
 	struct _ddebug *dp = p;
-	struct flagsbuf flags;
+	char flagsbuf[10];
 
 	vpr_info("called m=%p p=%p\n", m, p);
 
@@ -828,7 +829,7 @@ static int ddebug_proc_show(struct seq_file *m, void *p)
 	seq_printf(m, "%s:%u [%s]%s =%s \"",
 		   trim_prefix(dp->filename), dp->lineno,
 		   iter->table->mod_name, dp->function,
-		   ddebug_describe_flags(dp->flags, &flags));
+		   ddebug_describe_flags(dp, flagsbuf, sizeof(flagsbuf)));
 	seq_escape(m, dp->format, "\t\r\n\"");
 	seq_puts(m, "\"\n");
 
@@ -1031,8 +1032,13 @@ static int __init dynamic_debug_init(void)
 	int verbose_bytes = 0;
 
 	if (&__start___verbose == &__stop___verbose) {
-		pr_warn("_ddebug table is empty in a CONFIG_DYNAMIC_DEBUG build\n");
-		return 1;
+		if (IS_ENABLED(CONFIG_DYNAMIC_DEBUG)) {
+			pr_warn("_ddebug table is empty in a CONFIG_DYNAMIC_DEBUG build\n");
+			return 1;
+		}
+		pr_info("Ignore empty _ddebug table in a CONFIG_DYNAMIC_DEBUG_CORE build\n");
+		ddebug_init_success = 1;
+		return 0;
 	}
 	iter = __start___verbose;
 	modname = iter->modname;

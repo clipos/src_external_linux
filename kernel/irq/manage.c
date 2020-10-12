@@ -320,16 +320,12 @@ static bool irq_set_affinity_deactivated(struct irq_data *data,
 	struct irq_desc *desc = irq_data_to_desc(data);
 
 	/*
-	 * Handle irq chips which can handle affinity only in activated
-	 * state correctly
-	 *
 	 * If the interrupt is not yet activated, just store the affinity
 	 * mask and do not call the chip driver at all. On activation the
 	 * driver has to make sure anyway that the interrupt is in a
 	 * useable state so startup works.
 	 */
-	if (!IS_ENABLED(CONFIG_IRQ_DOMAIN_HIERARCHY) ||
-	    irqd_is_activated(data) || !irqd_affinity_on_activate(data))
+	if (!IS_ENABLED(CONFIG_IRQ_DOMAIN_HIERARCHY) || irqd_is_activated(data))
 		return false;
 
 	cpumask_copy(desc->irq_common_data.affinity, mask);
@@ -2656,6 +2652,8 @@ int __irq_get_irqchip_state(struct irq_data *data, enum irqchip_irq_state which,
 
 	do {
 		chip = irq_data_get_irq_chip(data);
+		if (WARN_ON_ONCE(!chip))
+			return -ENODEV;
 		if (chip->irq_get_irqchip_state)
 			break;
 #ifdef CONFIG_IRQ_DOMAIN_HIERARCHY
@@ -2733,6 +2731,8 @@ int irq_set_irqchip_state(unsigned int irq, enum irqchip_irq_state which,
 
 	do {
 		chip = irq_data_get_irq_chip(data);
+		if (WARN_ON_ONCE(!chip))
+			return -ENODEV;
 		if (chip->irq_set_irqchip_state)
 			break;
 #ifdef CONFIG_IRQ_DOMAIN_HIERARCHY

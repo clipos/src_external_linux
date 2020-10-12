@@ -40,11 +40,11 @@ static void guest_code(void)
 
 	/* Single step test, covers 2 basic instructions and 2 emulated */
 	asm volatile("ss_start: "
-		     "xor %%eax,%%eax\n\t"
+		     "xor %%rax,%%rax\n\t"
 		     "cpuid\n\t"
 		     "movl $0x1a0,%%ecx\n\t"
 		     "rdmsr\n\t"
-		     : : : "eax", "ebx", "ecx", "edx");
+		     : : : "rax", "ecx");
 
 	/* DR6.BD test */
 	asm volatile("bd_start: mov %%dr0, %%rax" : : : "rax");

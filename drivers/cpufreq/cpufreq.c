@@ -621,24 +621,6 @@ static struct cpufreq_governor *find_governor(const char *str_governor)
 	return NULL;
 }
 
-static struct cpufreq_governor *get_governor(const char *str_governor)
-{
-	struct cpufreq_governor *t;
-
-	mutex_lock(&cpufreq_governor_mutex);
-	t = find_governor(str_governor);
-	if (!t)
-		goto unlock;
-
-	if (!try_module_get(t->owner))
-		t = NULL;
-
-unlock:
-	mutex_unlock(&cpufreq_governor_mutex);
-
-	return t;
-}
-
 static unsigned int cpufreq_parse_policy(char *str_governor)
 {
 	if (!strncasecmp(str_governor, "performance", CPUFREQ_NAME_LEN))
@@ -658,14 +640,28 @@ static struct cpufreq_governor *cpufreq_parse_governor(char *str_governor)
 {
 	struct cpufreq_governor *t;
 
-	t = get_governor(str_governor);
-	if (t)
-		return t;
+	mutex_lock(&cpufreq_governor_mutex);
 
-	if (request_module("cpufreq_%s", str_governor))
-		return NULL;
+	t = find_governor(str_governor);
+	if (!t) {
+		int ret;
 
-	return get_governor(str_governor);
+		mutex_unlock(&cpufreq_governor_mutex);
+
+		ret = request_module("cpufreq_%s", str_governor);
+		if (ret)
+			return NULL;
+
+		mutex_lock(&cpufreq_governor_mutex);
+
+		t = find_governor(str_governor);
+	}
+	if (t && !try_module_get(t->owner))
+		t = NULL;
+
+	mutex_unlock(&cpufreq_governor_mutex);
+
+	return t;
 }
 
 /**
@@ -819,14 +815,12 @@ static ssize_t show_scaling_available_governors(struct cpufreq_policy *policy,
 		goto out;
 	}
 
-	mutex_lock(&cpufreq_governor_mutex);
 	for_each_governor(t) {
 		if (i >= (ssize_t) ((PAGE_SIZE / sizeof(char))
 		    - (CPUFREQ_NAME_LEN + 2)))
-			break;
+			goto out;
 		i += scnprintf(&buf[i], CPUFREQ_NAME_PLEN, "%s ", t->name);
 	}
-	mutex_unlock(&cpufreq_governor_mutex);
 out:
 	i += sprintf(&buf[i], "\n");
 	return i;
@@ -1064,17 +1058,15 @@ static int cpufreq_init_policy(struct cpufreq_policy *policy)
 	struct cpufreq_governor *def_gov = cpufreq_default_governor();
 	struct cpufreq_governor *gov = NULL;
 	unsigned int pol = CPUFREQ_POLICY_UNKNOWN;
-	int ret;
 
 	if (has_target()) {
 		/* Update policy governor to the one used before hotplug. */
-		gov = get_governor(policy->last_governor);
+		gov = find_governor(policy->last_governor);
 		if (gov) {
 			pr_debug("Restoring governor %s for cpu %d\n",
 				 policy->governor->name, policy->cpu);
 		} else if (def_gov) {
 			gov = def_gov;
-			__module_get(gov->owner);
 		} else {
 			return -ENODATA;
 		}
@@ -1097,11 +1089,7 @@ static int cpufreq_init_policy(struct cpufreq_policy *policy)
 			return -ENODATA;
 	}
 
-	ret = cpufreq_set_policy(policy, gov, pol);
-	if (gov)
-		module_put(gov->owner);
-
-	return ret;
+	return cpufreq_set_policy(policy, gov, pol);
 }
 
 static int cpufreq_add_policy_cpu(struct cpufreq_policy *policy, unsigned int cpu)
@@ -2544,34 +2532,29 @@ EXPORT_SYMBOL_GPL(cpufreq_update_limits);
 /*********************************************************************
  *               BOOST						     *
  *********************************************************************/
-static int cpufreq_boost_set_sw(int state)
+static int cpufreq_boost_set_sw(struct cpufreq_policy *policy, int state)
 {
-	struct cpufreq_policy *policy;
+	int ret;
 
-	for_each_active_policy(policy) {
-		int ret;
+	if (!policy->freq_table)
+		return -ENXIO;
 
-		if (!policy->freq_table)
-			return -ENXIO;
-
-		ret = cpufreq_frequency_table_cpuinfo(policy,
-						      policy->freq_table);
-		if (ret) {
-			pr_err("%s: Policy frequency update failed\n",
-			       __func__);
-			return ret;
-		}
-
-		ret = freq_qos_update_request(policy->max_freq_req, policy->max);
-		if (ret < 0)
-			return ret;
+	ret = cpufreq_frequency_table_cpuinfo(policy, policy->freq_table);
+	if (ret) {
+		pr_err("%s: Policy frequency update failed\n", __func__);
+		return ret;
 	}
+
+	ret = freq_qos_update_request(policy->max_freq_req, policy->max);
+	if (ret < 0)
+		return ret;
 
 	return 0;
 }
 
 int cpufreq_boost_trigger_state(int state)
 {
+	struct cpufreq_policy *policy;
 	unsigned long flags;
 	int ret = 0;
 
@@ -2582,15 +2565,25 @@ int cpufreq_boost_trigger_state(int state)
 	cpufreq_driver->boost_enabled = state;
 	write_unlock_irqrestore(&cpufreq_driver_lock, flags);
 
-	ret = cpufreq_driver->set_boost(state);
-	if (ret) {
-		write_lock_irqsave(&cpufreq_driver_lock, flags);
-		cpufreq_driver->boost_enabled = !state;
-		write_unlock_irqrestore(&cpufreq_driver_lock, flags);
-
-		pr_err("%s: Cannot %s BOOST\n",
-		       __func__, state ? "enable" : "disable");
+	get_online_cpus();
+	for_each_active_policy(policy) {
+		ret = cpufreq_driver->set_boost(policy, state);
+		if (ret)
+			goto err_reset_state;
 	}
+	put_online_cpus();
+
+	return 0;
+
+err_reset_state:
+	put_online_cpus();
+
+	write_lock_irqsave(&cpufreq_driver_lock, flags);
+	cpufreq_driver->boost_enabled = !state;
+	write_unlock_irqrestore(&cpufreq_driver_lock, flags);
+
+	pr_err("%s: Cannot %s BOOST\n",
+	       __func__, state ? "enable" : "disable");
 
 	return ret;
 }

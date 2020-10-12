@@ -487,12 +487,10 @@ static void devm_gpio_chip_release(struct device *dev, void *res)
 }
 
 /**
- * devm_gpiochip_add_data_with_key() - Resource managed gpiochip_add_data_with_key()
+ * devm_gpiochip_add_data() - Resource managed gpiochip_add_data()
  * @dev: pointer to the device that gpio_chip belongs to.
  * @gc: the GPIO chip to register
  * @data: driver-private data associated with this chip
- * @lock_key: lockdep class for IRQ lock
- * @request_key: lockdep class for IRQ request
  *
  * Context: potentially before irqs will work
  *
@@ -503,9 +501,8 @@ static void devm_gpio_chip_release(struct device *dev, void *res)
  * gc->base is invalid or already associated with a different chip.
  * Otherwise it returns zero as a success code.
  */
-int devm_gpiochip_add_data_with_key(struct device *dev, struct gpio_chip *gc, void *data,
-				    struct lock_class_key *lock_key,
-				    struct lock_class_key *request_key)
+int devm_gpiochip_add_data(struct device *dev, struct gpio_chip *gc,
+			   void *data)
 {
 	struct gpio_chip **ptr;
 	int ret;
@@ -515,7 +512,7 @@ int devm_gpiochip_add_data_with_key(struct device *dev, struct gpio_chip *gc, vo
 	if (!ptr)
 		return -ENOMEM;
 
-	ret = gpiochip_add_data_with_key(gc, data, lock_key, request_key);
+	ret = gpiochip_add_data(gc, data);
 	if (ret < 0) {
 		devres_free(ptr);
 		return ret;
@@ -526,4 +523,4 @@ int devm_gpiochip_add_data_with_key(struct device *dev, struct gpio_chip *gc, vo
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(devm_gpiochip_add_data_with_key);
+EXPORT_SYMBOL_GPL(devm_gpiochip_add_data);

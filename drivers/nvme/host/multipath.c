@@ -167,18 +167,9 @@ void nvme_mpath_clear_ctrl_paths(struct nvme_ctrl *ctrl)
 
 static bool nvme_path_is_disabled(struct nvme_ns *ns)
 {
-	/*
-	 * We don't treat NVME_CTRL_DELETING as a disabled path as I/O should
-	 * still be able to complete assuming that the controller is connected.
-	 * Otherwise it will fail immediately and return to the requeue list.
-	 */
-	if (ns->ctrl->state != NVME_CTRL_LIVE &&
-	    ns->ctrl->state != NVME_CTRL_DELETING)
-		return true;
-	if (test_bit(NVME_NS_ANA_PENDING, &ns->flags) ||
-	    test_bit(NVME_NS_REMOVING, &ns->flags))
-		return true;
-	return false;
+	return ns->ctrl->state != NVME_CTRL_LIVE ||
+		test_bit(NVME_NS_ANA_PENDING, &ns->flags) ||
+		test_bit(NVME_NS_REMOVING, &ns->flags);
 }
 
 static struct nvme_ns *__nvme_find_path(struct nvme_ns_head *head, int node)
@@ -255,12 +246,6 @@ static struct nvme_ns *nvme_round_robin_path(struct nvme_ns_head *head,
 			fallback = ns;
 	}
 
-	/* No optimized path found, re-check the current path */
-	if (!nvme_path_is_disabled(old) &&
-	    old->ana_state == NVME_ANA_OPTIMIZED) {
-		found = old;
-		goto out;
-	}
 	if (!fallback)
 		return NULL;
 	found = fallback;
@@ -281,13 +266,10 @@ inline struct nvme_ns *nvme_find_path(struct nvme_ns_head *head)
 	struct nvme_ns *ns;
 
 	ns = srcu_dereference(head->current_path[node], &head->srcu);
-	if (unlikely(!ns))
-		return __nvme_find_path(head, node);
-
-	if (READ_ONCE(head->subsys->iopolicy) == NVME_IOPOLICY_RR)
-		return nvme_round_robin_path(head, node, ns);
-	if (unlikely(!nvme_path_is_optimized(ns)))
-		return __nvme_find_path(head, node);
+	if (READ_ONCE(head->subsys->iopolicy) == NVME_IOPOLICY_RR && ns)
+		ns = nvme_round_robin_path(head, node, ns);
+	if (unlikely(!ns || !nvme_path_is_optimized(ns)))
+		ns = __nvme_find_path(head, node);
 	return ns;
 }
 
@@ -312,7 +294,7 @@ static bool nvme_available_path(struct nvme_ns_head *head)
 static blk_qc_t nvme_ns_head_make_request(struct request_queue *q,
 		struct bio *bio)
 {
-	struct nvme_ns_head *head = q->queuedata;
+	struct nvme_ns_head *head = bio->bi_disk->private_data;
 	struct device *dev = disk_to_dev(head->disk);
 	struct nvme_ns *ns;
 	blk_qc_t ret = BLK_QC_T_NONE;
@@ -390,13 +372,12 @@ int nvme_mpath_alloc_disk(struct nvme_ctrl *ctrl, struct nvme_ns_head *head)
 	 * We also do this for private namespaces as the namespace sharing data could
 	 * change after a rescan.
 	 */
-	if (!(ctrl->subsys->cmic & (1 << 1)) || !multipath)
+	if (!(ctrl->subsys->cmic & NVME_CTRL_CMIC_MULTI_CTRL) || !multipath)
 		return 0;
 
 	q = blk_alloc_queue(nvme_ns_head_make_request, ctrl->numa_node);
 	if (!q)
 		goto out;
-	q->queuedata = head;
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, q);
 	/* set to a default value for 512 until disk is validated */
 	blk_queue_logical_block_size(q, 512);
@@ -584,9 +565,6 @@ static void nvme_ana_work(struct work_struct *work)
 {
 	struct nvme_ctrl *ctrl = container_of(work, struct nvme_ctrl, ana_work);
 
-	if (ctrl->state != NVME_CTRL_LIVE)
-		return;
-
 	nvme_read_ana_log(ctrl);
 }
 
@@ -729,7 +707,8 @@ int nvme_mpath_init(struct nvme_ctrl *ctrl, struct nvme_id_ctrl *id)
 	int error;
 
 	/* check if multipath is enabled and we have the capability */
-	if (!multipath || !ctrl->subsys || !(ctrl->subsys->cmic & (1 << 3)))
+	if (!multipath || !ctrl->subsys ||
+	    !(ctrl->subsys->cmic & NVME_CTRL_CMIC_ANA))
 		return 0;
 
 	ctrl->anacap = id->anacap;

@@ -12,8 +12,6 @@
 
 #ifdef CONFIG_PPC_PERF_CTRS
 #include <asm/perf_event_server.h>
-#else
-static inline bool is_sier_available(void) { return false; }
 #endif
 
 #ifdef CONFIG_FSL_EMB_PERF_EVENT

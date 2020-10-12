@@ -36,10 +36,10 @@
 #include <linux/time.h>
 #include <linux/completion.h>
 #include <linux/acpi.h>
+#include <linux/pgtable.h>
 
 #ifdef CONFIG_X86
 /* for snoop control */
-#include <asm/pgtable.h>
 #include <asm/set_memory.h>
 #include <asm/cpufeature.h>
 #endif
@@ -2354,6 +2354,7 @@ static int azx_probe_continue(struct azx *chip)
 
 	if (azx_has_pm_runtime(chip)) {
 		pm_runtime_use_autosuspend(&pci->dev);
+		pm_runtime_allow(&pci->dev);
 		pm_runtime_put_autosuspend(&pci->dev);
 	}
 

@@ -46,8 +46,6 @@
 #define USB_TP_TRANSMISSION_DELAY	40	/* ns */
 #define USB_TP_TRANSMISSION_DELAY_MAX	65535	/* ns */
 
-extern int deny_new_usb;
-
 /* Protect struct usb_device->state and ->children members
  * Note: Both are also protected by ->dev.sem, except that ->state can
  * change to USB_STATE_NOTATTACHED even when the semaphore isn't held. */
@@ -95,7 +93,7 @@ module_param(old_scheme_first, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(old_scheme_first,
 		 "start with the old device initialization scheme");
 
-static bool use_both_schemes = 1;
+static bool use_both_schemes = true;
 module_param(use_both_schemes, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(use_both_schemes,
 		"try the other device initialization scheme if the "
@@ -5041,6 +5039,9 @@ static int descriptors_changed(struct usb_device *udev,
 	kfree(buf);
 	return changed;
 }
+
+/* sysctl */
+int deny_new_usb __read_mostly = 0;
 
 static void hub_port_connect(struct usb_hub *hub, int port1, u16 portstatus,
 		u16 portchange)

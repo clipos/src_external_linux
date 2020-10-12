@@ -70,8 +70,6 @@ struct vdpasim {
 	u32 status;
 	u32 generation;
 	u64 features;
-	/* spinlock to synchronize iommu table */
-	spinlock_t iommu_lock;
 };
 
 static struct vdpasim *vdpasim_dev;
@@ -103,7 +101,7 @@ static void vdpasim_queue_ready(struct vdpasim *vdpasim, unsigned int idx)
 
 static void vdpasim_vq_reset(struct vdpasim_virtqueue *vq)
 {
-	vq->ready = 0;
+	vq->ready = false;
 	vq->desc_addr = 0;
 	vq->driver_addr = 0;
 	vq->device_addr = 0;
@@ -120,9 +118,7 @@ static void vdpasim_reset(struct vdpasim *vdpasim)
 	for (i = 0; i < VDPASIM_VQ_NUM; i++)
 		vdpasim_vq_reset(&vdpasim->vqs[i]);
 
-	spin_lock(&vdpasim->iommu_lock);
 	vhost_iotlb_reset(vdpasim->iommu);
-	spin_unlock(&vdpasim->iommu_lock);
 
 	vdpasim->features = 0;
 	vdpasim->status = 0;
@@ -135,9 +131,10 @@ static void vdpasim_work(struct work_struct *work)
 						 vdpasim, work);
 	struct vdpasim_virtqueue *txq = &vdpasim->vqs[1];
 	struct vdpasim_virtqueue *rxq = &vdpasim->vqs[0];
-	size_t read, write, total_write;
-	int err;
+	ssize_t read, write;
+	size_t total_write;
 	int pkts = 0;
+	int err;
 
 	spin_lock(&vdpasim->lock);
 
@@ -239,10 +236,8 @@ static dma_addr_t vdpasim_map_page(struct device *dev, struct page *page,
 	/* For simplicity, use identical mapping to avoid e.g iova
 	 * allocator.
 	 */
-	spin_lock(&vdpasim->iommu_lock);
 	ret = vhost_iotlb_add_range(iommu, pa, pa + size - 1,
 				    pa, dir_to_perm(dir));
-	spin_unlock(&vdpasim->iommu_lock);
 	if (ret)
 		return DMA_MAPPING_ERROR;
 
@@ -256,10 +251,8 @@ static void vdpasim_unmap_page(struct device *dev, dma_addr_t dma_addr,
 	struct vdpasim *vdpasim = dev_to_sim(dev);
 	struct vhost_iotlb *iommu = vdpasim->iommu;
 
-	spin_lock(&vdpasim->iommu_lock);
 	vhost_iotlb_del_range(iommu, (u64)dma_addr,
 			      (u64)dma_addr + size - 1);
-	spin_unlock(&vdpasim->iommu_lock);
 }
 
 static void *vdpasim_alloc_coherent(struct device *dev, size_t size,
@@ -271,10 +264,9 @@ static void *vdpasim_alloc_coherent(struct device *dev, size_t size,
 	void *addr = kmalloc(size, flag);
 	int ret;
 
-	spin_lock(&vdpasim->iommu_lock);
-	if (!addr) {
+	if (!addr)
 		*dma_addr = DMA_MAPPING_ERROR;
-	} else {
+	else {
 		u64 pa = virt_to_phys(addr);
 
 		ret = vhost_iotlb_add_range(iommu, (u64)pa,
@@ -287,7 +279,6 @@ static void *vdpasim_alloc_coherent(struct device *dev, size_t size,
 		} else
 			*dma_addr = (dma_addr_t)pa;
 	}
-	spin_unlock(&vdpasim->iommu_lock);
 
 	return addr;
 }
@@ -299,11 +290,8 @@ static void vdpasim_free_coherent(struct device *dev, size_t size,
 	struct vdpasim *vdpasim = dev_to_sim(dev);
 	struct vhost_iotlb *iommu = vdpasim->iommu;
 
-	spin_lock(&vdpasim->iommu_lock);
 	vhost_iotlb_del_range(iommu, (u64)dma_addr,
 			      (u64)dma_addr + size - 1);
-	spin_unlock(&vdpasim->iommu_lock);
-
 	kfree(phys_to_virt((uintptr_t)dma_addr));
 }
 
@@ -330,7 +318,6 @@ static struct vdpasim *vdpasim_create(void)
 
 	INIT_WORK(&vdpasim->work, vdpasim_work);
 	spin_lock_init(&vdpasim->lock);
-	spin_lock_init(&vdpasim->iommu_lock);
 
 	dev = &vdpasim->vdpa.dev;
 	dev->coherent_dma_mask = DMA_BIT_MASK(64);
@@ -521,7 +508,7 @@ static void vdpasim_get_config(struct vdpa_device *vdpa, unsigned int offset,
 	struct vdpasim *vdpasim = vdpa_to_sim(vdpa);
 
 	if (offset + len < sizeof(struct virtio_net_config))
-		memcpy(buf, (u8 *)&vdpasim->config + offset, len);
+		memcpy(buf, &vdpasim->config + offset, len);
 }
 
 static void vdpasim_set_config(struct vdpa_device *vdpa, unsigned int offset,
@@ -545,7 +532,6 @@ static int vdpasim_set_map(struct vdpa_device *vdpa,
 	u64 start = 0ULL, last = 0ULL - 1;
 	int ret;
 
-	spin_lock(&vdpasim->iommu_lock);
 	vhost_iotlb_reset(vdpasim->iommu);
 
 	for (map = vhost_iotlb_itree_first(iotlb, start, last); map;
@@ -555,12 +541,10 @@ static int vdpasim_set_map(struct vdpa_device *vdpa,
 		if (ret)
 			goto err;
 	}
-	spin_unlock(&vdpasim->iommu_lock);
 	return 0;
 
 err:
 	vhost_iotlb_reset(vdpasim->iommu);
-	spin_unlock(&vdpasim->iommu_lock);
 	return ret;
 }
 
@@ -568,23 +552,16 @@ static int vdpasim_dma_map(struct vdpa_device *vdpa, u64 iova, u64 size,
 			   u64 pa, u32 perm)
 {
 	struct vdpasim *vdpasim = vdpa_to_sim(vdpa);
-	int ret;
 
-	spin_lock(&vdpasim->iommu_lock);
-	ret = vhost_iotlb_add_range(vdpasim->iommu, iova, iova + size - 1, pa,
-				    perm);
-	spin_unlock(&vdpasim->iommu_lock);
-
-	return ret;
+	return vhost_iotlb_add_range(vdpasim->iommu, iova,
+				     iova + size - 1, pa, perm);
 }
 
 static int vdpasim_dma_unmap(struct vdpa_device *vdpa, u64 iova, u64 size)
 {
 	struct vdpasim *vdpasim = vdpa_to_sim(vdpa);
 
-	spin_lock(&vdpasim->iommu_lock);
 	vhost_iotlb_del_range(vdpasim->iommu, iova, iova + size - 1);
-	spin_unlock(&vdpasim->iommu_lock);
 
 	return 0;
 }

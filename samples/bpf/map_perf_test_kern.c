@@ -11,8 +11,6 @@
 #include <bpf/bpf_helpers.h>
 #include "bpf_legacy.h"
 #include <bpf/bpf_tracing.h>
-#include <bpf/bpf_core_read.h>
-#include "trace_common.h"
 
 #define MAX_ENTRIES 1000
 #define MAX_NR_CPUS 1024
@@ -156,10 +154,9 @@ int stress_percpu_hmap_alloc(struct pt_regs *ctx)
 	return 0;
 }
 
-SEC("kprobe/" SYSCALL(sys_connect))
+SEC("kprobe/sys_connect")
 int stress_lru_hmap_alloc(struct pt_regs *ctx)
 {
-	struct pt_regs *real_regs = (struct pt_regs *)PT_REGS_PARM1_CORE(ctx);
 	char fmt[] = "Failed at stress_lru_hmap_alloc. ret:%dn";
 	union {
 		u16 dst6[8];
@@ -178,8 +175,8 @@ int stress_lru_hmap_alloc(struct pt_regs *ctx)
 	long val = 1;
 	u32 key = 0;
 
-	in6 = (struct sockaddr_in6 *)PT_REGS_PARM2_CORE(real_regs);
-	addrlen = (int)PT_REGS_PARM3_CORE(real_regs);
+	in6 = (struct sockaddr_in6 *)PT_REGS_PARM2(ctx);
+	addrlen = (int)PT_REGS_PARM3(ctx);
 
 	if (addrlen != sizeof(*in6))
 		return 0;

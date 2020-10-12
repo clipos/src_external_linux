@@ -72,23 +72,32 @@ const char * __attribute_const__ btrfs_decode_error(int errno)
 	char *errstr = "unknown";
 
 	switch (errno) {
-	case -EIO:
+	case -ENOENT:		/* -2 */
+		errstr = "No such entry";
+		break;
+	case -EIO:		/* -5 */
 		errstr = "IO failure";
 		break;
-	case -ENOMEM:
+	case -ENOMEM:		/* -12*/
 		errstr = "Out of memory";
 		break;
-	case -EROFS:
-		errstr = "Readonly filesystem";
-		break;
-	case -EEXIST:
+	case -EEXIST:		/* -17 */
 		errstr = "Object already exists";
 		break;
-	case -ENOSPC:
+	case -ENOSPC:		/* -28 */
 		errstr = "No space left";
 		break;
-	case -ENOENT:
-		errstr = "No such entry";
+	case -EROFS:		/* -30 */
+		errstr = "Readonly filesystem";
+		break;
+	case -EOPNOTSUPP:	/* -95 */
+		errstr = "Operation not supported";
+		break;
+	case -EUCLEAN:		/* -117 */
+		errstr = "Filesystem corrupted";
+		break;
+	case -EDQUOT:		/* -122 */
+		errstr = "Quota exceeded";
 		break;
 	}
 
@@ -440,7 +449,6 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 	char *compress_type;
 	bool compress_force = false;
 	enum btrfs_compression_type saved_compress_type;
-	int saved_compress_level;
 	bool saved_compress_force;
 	int no_compress = 0;
 
@@ -515,7 +523,7 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 		case Opt_compress_force:
 		case Opt_compress_force_type:
 			compress_force = true;
-			/* Fallthrough */
+			fallthrough;
 		case Opt_compress:
 		case Opt_compress_type:
 			saved_compress_type = btrfs_test_opt(info,
@@ -523,7 +531,6 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 				info->compress_type : BTRFS_COMPRESS_NONE;
 			saved_compress_force =
 				btrfs_test_opt(info, FORCE_COMPRESS);
-			saved_compress_level = info->compress_level;
 			if (token == Opt_compress ||
 			    token == Opt_compress_force ||
 			    strncmp(args[0].from, "zlib", 4) == 0) {
@@ -568,8 +575,6 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 				no_compress = 0;
 			} else if (strncmp(args[0].from, "no", 2) == 0) {
 				compress_type = "no";
-				info->compress_level = 0;
-				info->compress_type = 0;
 				btrfs_clear_opt(info->mount_opt, COMPRESS);
 				btrfs_clear_opt(info->mount_opt, FORCE_COMPRESS);
 				compress_force = false;
@@ -590,11 +595,11 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 				 */
 				btrfs_clear_opt(info->mount_opt, FORCE_COMPRESS);
 			}
-			if (no_compress == 1) {
-				btrfs_info(info, "use no compression");
-			} else if ((info->compress_type != saved_compress_type) ||
-				   (compress_force != saved_compress_force) ||
-				   (info->compress_level != saved_compress_level)) {
+			if ((btrfs_test_opt(info, COMPRESS) &&
+			     (info->compress_type != saved_compress_type ||
+			      compress_force != saved_compress_force)) ||
+			    (!btrfs_test_opt(info, COMPRESS) &&
+			     no_compress == 1)) {
 				btrfs_info(info, "%s %s compression, level %d",
 					   (compress_force) ? "force" : "use",
 					   compress_type, info->compress_level);
@@ -617,7 +622,7 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 			btrfs_set_opt(info->mount_opt, NOSSD);
 			btrfs_clear_and_info(info, SSD,
 					     "not using ssd optimizations");
-			/* Fallthrough */
+			fallthrough;
 		case Opt_nossd_spread:
 			btrfs_clear_and_info(info, SSD_SPREAD,
 					     "not using spread ssd allocation scheme");
@@ -788,7 +793,7 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 		case Opt_recovery:
 			btrfs_warn(info,
 				   "'recovery' is deprecated, use 'usebackuproot' instead");
-			/* fall through */
+			fallthrough;
 		case Opt_usebackuproot:
 			btrfs_info(info,
 				   "trying to use backup root at mount time");
@@ -1097,10 +1102,7 @@ char *btrfs_get_subvol_name_from_objectid(struct btrfs_fs_info *fs_info,
 		dirid = btrfs_root_ref_dirid(path->nodes[0], root_ref);
 		btrfs_release_path(path);
 
-		key.objectid = subvol_objectid;
-		key.type = BTRFS_ROOT_ITEM_KEY;
-		key.offset = (u64)-1;
-		fs_root = btrfs_get_fs_root(fs_info, &key, true);
+		fs_root = btrfs_get_fs_root(fs_info, subvol_objectid, true);
 		if (IS_ERR(fs_root)) {
 			ret = PTR_ERR(fs_root);
 			fs_root = NULL;
@@ -1215,7 +1217,6 @@ static int btrfs_fill_super(struct super_block *sb,
 {
 	struct inode *inode;
 	struct btrfs_fs_info *fs_info = btrfs_sb(sb);
-	struct btrfs_key key;
 	int err;
 
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
@@ -1243,10 +1244,7 @@ static int btrfs_fill_super(struct super_block *sb,
 		return err;
 	}
 
-	key.objectid = BTRFS_FIRST_FREE_OBJECTID;
-	key.type = BTRFS_INODE_ITEM_KEY;
-	key.offset = 0;
-	inode = btrfs_iget(sb, &key, fs_info->fs_root);
+	inode = btrfs_iget(sb, BTRFS_FIRST_FREE_OBJECTID, fs_info->fs_root);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
 		goto fail_close;
@@ -1314,7 +1312,6 @@ static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
 {
 	struct btrfs_fs_info *info = btrfs_sb(dentry->d_sb);
 	const char *compress_type;
-	const char *subvol_name;
 
 	if (btrfs_test_opt(info, DEGRADED))
 		seq_puts(seq, ",degraded");
@@ -1401,13 +1398,8 @@ static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
 		seq_puts(seq, ",ref_verify");
 	seq_printf(seq, ",subvolid=%llu",
 		  BTRFS_I(d_inode(dentry))->root->root_key.objectid);
-	subvol_name = btrfs_get_subvol_name_from_objectid(info,
-			BTRFS_I(d_inode(dentry))->root->root_key.objectid);
-	if (!IS_ERR(subvol_name)) {
-		seq_puts(seq, ",subvol=");
-		seq_escape(seq, subvol_name, " \t\n\\");
-		kfree(subvol_name);
-	}
+	seq_puts(seq, ",subvol=");
+	seq_dentry(seq, dentry, " \t\n\\");
 	return 0;
 }
 
@@ -1895,12 +1887,6 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		set_bit(BTRFS_FS_OPEN, &fs_info->flags);
 	}
 out:
-	/*
-	 * We need to set SB_I_VERSION here otherwise it'll get cleared by VFS,
-	 * since the absence of the flag means it can be toggled off by remount.
-	 */
-	*flags |= SB_I_VERSION;
-
 	wake_up_process(fs_info->transaction_kthread);
 	btrfs_remount_cleanup(fs_info, old_opts);
 	return 0;
@@ -2310,7 +2296,9 @@ static int btrfs_unfreeze(struct super_block *sb)
 static int btrfs_show_devname(struct seq_file *m, struct dentry *root)
 {
 	struct btrfs_fs_info *fs_info = btrfs_sb(root->d_sb);
+	struct btrfs_fs_devices *cur_devices;
 	struct btrfs_device *dev, *first_dev = NULL;
+	struct list_head *head;
 
 	/*
 	 * Lightweight locking of the devices. We should not need
@@ -2320,13 +2308,18 @@ static int btrfs_show_devname(struct seq_file *m, struct dentry *root)
 	 * least until the rcu_read_unlock.
 	 */
 	rcu_read_lock();
-	list_for_each_entry_rcu(dev, &fs_info->fs_devices->devices, dev_list) {
-		if (test_bit(BTRFS_DEV_STATE_MISSING, &dev->dev_state))
-			continue;
-		if (!dev->name)
-			continue;
-		if (!first_dev || dev->devid < first_dev->devid)
-			first_dev = dev;
+	cur_devices = fs_info->fs_devices;
+	while (cur_devices) {
+		head = &cur_devices->devices;
+		list_for_each_entry_rcu(dev, head, dev_list) {
+			if (test_bit(BTRFS_DEV_STATE_MISSING, &dev->dev_state))
+				continue;
+			if (!dev->name)
+				continue;
+			if (!first_dev || dev->devid < first_dev->devid)
+				first_dev = dev;
+		}
+		cur_devices = cur_devices->seed;
 	}
 
 	if (first_dev)

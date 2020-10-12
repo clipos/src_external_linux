@@ -8,6 +8,7 @@
 #include <linux/of.h>
 #include <linux/pci-epc.h>
 #include <linux/platform_device.h>
+#include <linux/pm_runtime.h>
 #include <linux/sizes.h>
 
 #include "pcie-cadence.h"
@@ -439,7 +440,8 @@ int cdns_pcie_ep_setup(struct cdns_pcie_ep *ep)
 	epc = devm_pci_epc_create(dev, &cdns_pcie_epc_ops);
 	if (IS_ERR(epc)) {
 		dev_err(dev, "failed to create epc device\n");
-		return PTR_ERR(epc);
+		ret = PTR_ERR(epc);
+		goto err_init;
 	}
 
 	epc_set_drvdata(epc, ep);
@@ -448,10 +450,10 @@ int cdns_pcie_ep_setup(struct cdns_pcie_ep *ep)
 		epc->max_functions = 1;
 
 	ret = pci_epc_mem_init(epc, pcie->mem_res->start,
-			       resource_size(pcie->mem_res));
+			       resource_size(pcie->mem_res), PAGE_SIZE);
 	if (ret < 0) {
 		dev_err(dev, "failed to initialize the memory space\n");
-		return ret;
+		goto err_init;
 	}
 
 	ep->irq_cpu_addr = pci_epc_mem_alloc_addr(epc, &ep->irq_phys_addr,
@@ -469,6 +471,9 @@ int cdns_pcie_ep_setup(struct cdns_pcie_ep *ep)
 
  free_epc_mem:
 	pci_epc_mem_exit(epc);
+
+ err_init:
+	pm_runtime_put_sync(dev);
 
 	return ret;
 }

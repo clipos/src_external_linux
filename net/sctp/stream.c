@@ -88,13 +88,12 @@ static int sctp_stream_alloc_out(struct sctp_stream *stream, __u16 outcnt,
 	int ret;
 
 	if (outcnt <= stream->outcnt)
-		goto out;
+		return 0;
 
 	ret = genradix_prealloc(&stream->out, outcnt, gfp);
 	if (ret)
 		return ret;
 
-out:
 	stream->outcnt = outcnt;
 	return 0;
 }
@@ -105,13 +104,12 @@ static int sctp_stream_alloc_in(struct sctp_stream *stream, __u16 incnt,
 	int ret;
 
 	if (incnt <= stream->incnt)
-		goto out;
+		return 0;
 
 	ret = genradix_prealloc(&stream->in, incnt, gfp);
 	if (ret)
 		return ret;
 
-out:
 	stream->incnt = incnt;
 	return 0;
 }

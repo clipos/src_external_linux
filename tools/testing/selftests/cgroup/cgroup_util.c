@@ -106,7 +106,7 @@ int cg_read_strcmp(const char *cgroup, const char *control,
 
 	/* Handle the case of comparing against empty string */
 	if (!expected)
-		return -1;
+		size = 32;
 	else
 		size = strlen(expected) + 1;
 

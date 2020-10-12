@@ -7,6 +7,7 @@
 #include <linux/of_address.h>
 #include <linux/of_pci.h>
 #include <linux/platform_device.h>
+#include <linux/pm_runtime.h>
 
 #include "pcie-cadence.h"
 
@@ -69,7 +70,6 @@ static int cdns_pcie_host_init_root_port(struct cdns_pcie_rc *rc)
 {
 	struct cdns_pcie *pcie = &rc->pcie;
 	u32 value, ctrl;
-	u32 id;
 
 	/*
 	 * Set the root complex BAR configuration register:
@@ -89,12 +89,8 @@ static int cdns_pcie_host_init_root_port(struct cdns_pcie_rc *rc)
 	cdns_pcie_writel(pcie, CDNS_PCIE_LM_RC_BAR_CFG, value);
 
 	/* Set root port configuration space */
-	if (rc->vendor_id != 0xffff) {
-		id = CDNS_PCIE_LM_ID_VENDOR(rc->vendor_id) |
-			CDNS_PCIE_LM_ID_SUBSYS(rc->vendor_id);
-		cdns_pcie_writel(pcie, CDNS_PCIE_LM_ID, id);
-	}
-
+	if (rc->vendor_id != 0xffff)
+		cdns_pcie_rp_writew(pcie, PCI_VENDOR_ID, rc->vendor_id);
 	if (rc->device_id != 0xffff)
 		cdns_pcie_rp_writew(pcie, PCI_DEVICE_ID, rc->device_id);
 
@@ -143,9 +139,6 @@ static int cdns_pcie_host_init_address_translation(struct cdns_pcie_rc *rc)
 	r = 1;
 	for_each_of_pci_range(&parser, &range) {
 		bool is_io;
-
-		if (r >= rc->max_regions)
-			break;
 
 		if ((range.flags & IORESOURCE_TYPE_BITS) == IORESOURCE_MEM)
 			is_io = false;
@@ -223,17 +216,14 @@ int cdns_pcie_host_setup(struct cdns_pcie_rc *rc)
 	pcie = &rc->pcie;
 	pcie->is_rc = true;
 
-	rc->max_regions = 32;
-	of_property_read_u32(np, "cdns,max-outbound-regions", &rc->max_regions);
-
 	rc->no_bar_nbits = 32;
 	of_property_read_u32(np, "cdns,no-bar-match-nbits", &rc->no_bar_nbits);
 
 	rc->vendor_id = 0xffff;
-	of_property_read_u16(np, "vendor-id", &rc->vendor_id);
+	of_property_read_u32(np, "vendor-id", &rc->vendor_id);
 
 	rc->device_id = 0xffff;
-	of_property_read_u16(np, "device-id", &rc->device_id);
+	of_property_read_u32(np, "device-id", &rc->device_id);
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "reg");
 	pcie->reg_base = devm_ioremap_resource(dev, res);
@@ -260,7 +250,7 @@ int cdns_pcie_host_setup(struct cdns_pcie_rc *rc)
 
 	ret = cdns_pcie_host_init(dev, &resources, rc);
 	if (ret)
-		return ret;
+		goto err_init;
 
 	list_splice_init(&resources, &bridge->windows);
 	bridge->dev.parent = dev;
@@ -277,6 +267,9 @@ int cdns_pcie_host_setup(struct cdns_pcie_rc *rc)
 
  err_host_probe:
 	pci_free_resource_list(&resources);
+
+ err_init:
+	pm_runtime_put_sync(dev);
 
 	return ret;
 }

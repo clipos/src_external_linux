@@ -2249,26 +2249,34 @@ static void mv88e6xxx_port_bridge_leave(struct dsa_switch *ds, int port,
 	mv88e6xxx_reg_unlock(chip);
 }
 
-static int mv88e6xxx_crosschip_bridge_join(struct dsa_switch *ds, int dev,
+static int mv88e6xxx_crosschip_bridge_join(struct dsa_switch *ds,
+					   int tree_index, int sw_index,
 					   int port, struct net_device *br)
 {
 	struct mv88e6xxx_chip *chip = ds->priv;
 	int err;
 
+	if (tree_index != ds->dst->index)
+		return 0;
+
 	mv88e6xxx_reg_lock(chip);
-	err = mv88e6xxx_pvt_map(chip, dev, port);
+	err = mv88e6xxx_pvt_map(chip, sw_index, port);
 	mv88e6xxx_reg_unlock(chip);
 
 	return err;
 }
 
-static void mv88e6xxx_crosschip_bridge_leave(struct dsa_switch *ds, int dev,
+static void mv88e6xxx_crosschip_bridge_leave(struct dsa_switch *ds,
+					     int tree_index, int sw_index,
 					     int port, struct net_device *br)
 {
 	struct mv88e6xxx_chip *chip = ds->priv;
 
+	if (tree_index != ds->dst->index)
+		return;
+
 	mv88e6xxx_reg_lock(chip);
-	if (mv88e6xxx_pvt_map(chip, dev, port))
+	if (mv88e6xxx_pvt_map(chip, sw_index, port))
 		dev_err(ds->dev, "failed to remap cross-chip Port VLAN\n");
 	mv88e6xxx_reg_unlock(chip);
 }
@@ -3477,6 +3485,7 @@ static const struct mv88e6xxx_ops mv88e6097_ops = {
 	.port_set_frame_mode = mv88e6351_port_set_frame_mode,
 	.port_set_egress_floods = mv88e6352_port_set_egress_floods,
 	.port_set_ether_type = mv88e6351_port_set_ether_type,
+	.port_set_jumbo_size = mv88e6165_port_set_jumbo_size,
 	.port_egress_rate_limiting = mv88e6095_port_egress_rate_limiting,
 	.port_pause_limit = mv88e6097_port_pause_limit,
 	.port_disable_learn_limit = mv88e6xxx_port_disable_learn_limit,

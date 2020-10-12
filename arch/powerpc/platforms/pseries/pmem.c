@@ -24,6 +24,7 @@
 #include <asm/topology.h>
 
 #include "pseries.h"
+#include "offline_states.h"
 
 static struct device_node *pmem_node;
 

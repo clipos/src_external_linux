@@ -8,7 +8,6 @@
 #
 set -e
 TRIGGER=/sys/kernel/debug/provoke-crash/DIRECT
-CLEAR_ONCE=/sys/kernel/debug/clear_warn_once
 KSELFTEST_SKIP_TEST=4
 
 # Verify we have LKDTM available in the kernel.
@@ -67,11 +66,6 @@ cleanup() {
 	rm -f "$LOG" "$DMESG"
 }
 trap cleanup EXIT
-
-# Reset WARN_ONCE counters so we trip it each time this runs.
-if [ -w $CLEAR_ONCE ] ; then
-	echo 1 > $CLEAR_ONCE
-fi
 
 # Save existing dmesg so we can detect new content below
 dmesg > "$DMESG"
