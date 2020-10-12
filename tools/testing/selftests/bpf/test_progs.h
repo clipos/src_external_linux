@@ -78,6 +78,8 @@ struct test_env {
 	int sub_succ_cnt; /* successful sub-tests */
 	int fail_cnt; /* total failed tests + sub-tests */
 	int skip_cnt; /* skipped tests */
+
+	int saved_netns_fd;
 };
 
 extern struct test_env env;
@@ -129,6 +131,11 @@ extern int test__join_cgroup(const char *path);
 static inline __u64 ptr_to_u64(const void *ptr)
 {
 	return (__u64) (unsigned long) ptr;
+}
+
+static inline void *u64_to_ptr(__u64 ptr)
+{
+	return (void *) (unsigned long) ptr;
 }
 
 int bpf_find_map(const char *test, struct bpf_object *obj, const char *name);

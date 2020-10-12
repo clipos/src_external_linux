@@ -629,7 +629,7 @@ static int hns_roce_v2_post_recv(struct ib_qp *ibqp,
 
 		wqe_idx = (hr_qp->rq.head + nreq) & (hr_qp->rq.wqe_cnt - 1);
 
-		if (unlikely(wr->num_sge >= hr_qp->rq.max_gs)) {
+		if (unlikely(wr->num_sge > hr_qp->rq.max_gs)) {
 			ibdev_err(ibdev, "rq:num_sge=%d >= qp->sq.max_gs=%d\n",
 				  wr->num_sge, hr_qp->rq.max_gs);
 			ret = -EINVAL;
@@ -649,7 +649,6 @@ static int hns_roce_v2_post_recv(struct ib_qp *ibqp,
 		if (wr->num_sge < hr_qp->rq.max_gs) {
 			dseg->lkey = cpu_to_le32(HNS_ROCE_INVALID_LKEY);
 			dseg->addr = 0;
-			dseg->len = cpu_to_le32(HNS_ROCE_INVALID_SGE_LENGTH);
 		}
 
 		/* rq support inline data */
@@ -783,8 +782,8 @@ static int hns_roce_v2_post_srq_recv(struct ib_srq *ibsrq,
 		}
 
 		if (wr->num_sge < srq->max_gs) {
-			dseg[i].len = cpu_to_le32(HNS_ROCE_INVALID_SGE_LENGTH);
-			dseg[i].lkey = cpu_to_le32(HNS_ROCE_INVALID_LKEY);
+			dseg[i].len = 0;
+			dseg[i].lkey = cpu_to_le32(0x100);
 			dseg[i].addr = 0;
 		}
 
@@ -3053,6 +3052,7 @@ static void get_cqe_status(struct hns_roce_dev *hr_dev, struct hns_roce_qp *qp,
 		  IB_WC_RETRY_EXC_ERR },
 		{ HNS_ROCE_CQE_V2_RNR_RETRY_EXC_ERR, IB_WC_RNR_RETRY_EXC_ERR },
 		{ HNS_ROCE_CQE_V2_REMOTE_ABORT_ERR, IB_WC_REM_ABORT_ERR },
+		{ HNS_ROCE_CQE_V2_GENERAL_ERR, IB_WC_GENERAL_ERR}
 	};
 
 	u32 cqe_status = roce_get_field(cqe->byte_4, V2_CQE_BYTE_4_STATUS_M,
@@ -3073,6 +3073,14 @@ static void get_cqe_status(struct hns_roce_dev *hr_dev, struct hns_roce_qp *qp,
 	ibdev_err(&hr_dev->ib_dev, "error cqe status 0x%x:\n", cqe_status);
 	print_hex_dump(KERN_ERR, "", DUMP_PREFIX_NONE, 16, 4, cqe,
 		       sizeof(*cqe), false);
+
+	/*
+	 * For hns ROCEE, GENERAL_ERR is an error type that is not defined in
+	 * the standard protocol, the driver must ignore it and needn't to set
+	 * the QP to an error state.
+	 */
+	if (cqe_status == HNS_ROCE_CQE_V2_GENERAL_ERR)
+		return;
 
 	/*
 	 * Hip08 hardware cannot flush the WQEs in SQ/RQ if the QP state gets
@@ -4301,7 +4309,9 @@ static bool check_qp_state(enum ib_qp_state cur_state,
 		[IB_QPS_RTR] = { [IB_QPS_RESET] = true,
 				 [IB_QPS_RTS] = true,
 				 [IB_QPS_ERR] = true },
-		[IB_QPS_RTS] = { [IB_QPS_RESET] = true, [IB_QPS_ERR] = true },
+		[IB_QPS_RTS] = { [IB_QPS_RESET] = true,
+				 [IB_QPS_RTS] = true,
+				 [IB_QPS_ERR] = true },
 		[IB_QPS_SQD] = {},
 		[IB_QPS_SQE] = {},
 		[IB_QPS_ERR] = { [IB_QPS_RESET] = true, [IB_QPS_ERR] = true }
@@ -5087,7 +5097,7 @@ static int hns_roce_v2_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr)
 
 	attr->srq_limit = limit_wl;
 	attr->max_wr = srq->wqe_cnt - 1;
-	attr->max_sge = srq->max_gs - HNS_ROCE_RESERVED_SGE;
+	attr->max_sge = srq->max_gs;
 
 out:
 	hns_roce_free_cmd_mailbox(hr_dev, mailbox);

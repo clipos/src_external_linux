@@ -654,21 +654,6 @@ void radix__mmu_cleanup_all(void)
 	}
 }
 
-void radix__setup_initial_memory_limit(phys_addr_t first_memblock_base,
-				phys_addr_t first_memblock_size)
-{
-	/*
-	 * We don't currently support the first MEMBLOCK not mapping 0
-	 * physical on those processors
-	 */
-	BUG_ON(first_memblock_base != 0);
-
-	/*
-	 * Radix mode is not limited by RMA / VRMA addressing.
-	 */
-	ppc64_rma_size = ULONG_MAX;
-}
-
 #ifdef CONFIG_MEMORY_HOTPLUG
 static void free_pte_table(pte_t *pte_start, pmd_t *pmd)
 {
@@ -698,6 +683,21 @@ static void free_pmd_table(pmd_t *pmd_start, pud_t *pud)
 
 	pmd_free(&init_mm, pmd_start);
 	pud_clear(pud);
+}
+
+static void free_pud_table(pud_t *pud_start, p4d_t *p4d)
+{
+	pud_t *pud;
+	int i;
+
+	for (i = 0; i < PTRS_PER_PUD; i++) {
+		pud = pud_start + i;
+		if (!pud_none(*pud))
+			return;
+	}
+
+	pud_free(&init_mm, pud_start);
+	p4d_clear(p4d);
 }
 
 struct change_mapping_params {
@@ -874,6 +874,7 @@ static void __meminit remove_pagetable(unsigned long start, unsigned long end)
 
 		pud_base = (pud_t *)p4d_page_vaddr(*p4d);
 		remove_pud_table(pud_base, addr, next);
+		free_pud_table(pud_base, p4d);
 	}
 
 	spin_unlock(&init_mm.page_table_lock);
