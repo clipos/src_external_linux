@@ -184,16 +184,23 @@ static inline void ccid3_hc_tx_update_win_count(struct ccid3_hc_tx_sock *hc,
 
 static void ccid3_hc_tx_no_feedback_timer(struct timer_list *t)
 {
-	struct ccid3_hc_tx_sock *hc = from_timer(hc, t, tx_no_feedback_timer);
-	struct sock *sk = hc->sk;
+	struct dccp_sock *dp = from_timer(dp, t, dccps_ccid_timer);
+	struct ccid3_hc_tx_sock *hc;
+	struct sock *sk = (struct sock *)dp;
 	unsigned long t_nfb = USEC_PER_SEC / 5;
 
 	bh_lock_sock(sk);
+
+	if (inet_sk_state_load(sk) == DCCP_CLOSED)
+		goto out;
+
 	if (sock_owned_by_user(sk)) {
 		/* Try again later. */
 		/* XXX: set some sensible MIB */
 		goto restart_timer;
 	}
+
+	hc = ccid_priv(dp->dccps_hc_tx_ccid);
 
 	ccid3_pr_debug("%s(%p, state=%s) - entry\n", dccp_role(sk), sk,
 		       ccid3_tx_state_name(hc->tx_state));
@@ -250,8 +257,8 @@ static void ccid3_hc_tx_no_feedback_timer(struct timer_list *t)
 		t_nfb = max(hc->tx_t_rto, 2 * hc->tx_t_ipi);
 
 restart_timer:
-	sk_reset_timer(sk, &hc->tx_no_feedback_timer,
-			   jiffies + usecs_to_jiffies(t_nfb));
+	sk_reset_timer(sk, &dp->dccps_ccid_timer,
+		       jiffies + usecs_to_jiffies(t_nfb));
 out:
 	bh_unlock_sock(sk);
 	sock_put(sk);
@@ -280,7 +287,7 @@ static int ccid3_hc_tx_send_packet(struct sock *sk, struct sk_buff *skb)
 		return -EBADMSG;
 
 	if (hc->tx_state == TFRC_SSTATE_NO_SENT) {
-		sk_reset_timer(sk, &hc->tx_no_feedback_timer, (jiffies +
+		sk_reset_timer(sk, &dp->dccps_ccid_timer, (jiffies +
 			       usecs_to_jiffies(TFRC_INITIAL_TIMEOUT)));
 		hc->tx_last_win_count	= 0;
 		hc->tx_t_last_win_count = now;
@@ -354,6 +361,7 @@ static void ccid3_hc_tx_packet_sent(struct sock *sk, unsigned int len)
 static void ccid3_hc_tx_packet_recv(struct sock *sk, struct sk_buff *skb)
 {
 	struct ccid3_hc_tx_sock *hc = ccid3_hc_tx_sk(sk);
+	struct dccp_sock *dp = dccp_sk(sk);
 	struct tfrc_tx_hist_entry *acked;
 	ktime_t now;
 	unsigned long t_nfb;
@@ -420,7 +428,7 @@ done_computing_x:
 			       (unsigned int)(hc->tx_x >> 6));
 
 	/* unschedule no feedback timer */
-	sk_stop_timer(sk, &hc->tx_no_feedback_timer);
+	sk_stop_timer(sk, &dp->dccps_ccid_timer);
 
 	/*
 	 * As we have calculated new ipi, delta, t_nom it is possible
@@ -445,8 +453,8 @@ done_computing_x:
 		       "expire in %lu jiffies (%luus)\n",
 		       dccp_role(sk), sk, usecs_to_jiffies(t_nfb), t_nfb);
 
-	sk_reset_timer(sk, &hc->tx_no_feedback_timer,
-			   jiffies + usecs_to_jiffies(t_nfb));
+	sk_reset_timer(sk, &dp->dccps_ccid_timer,
+		       jiffies + usecs_to_jiffies(t_nfb));
 }
 
 static int ccid3_hc_tx_parse_options(struct sock *sk, u8 packet_type,
@@ -488,21 +496,23 @@ static int ccid3_hc_tx_parse_options(struct sock *sk, u8 packet_type,
 
 static int ccid3_hc_tx_init(struct ccid *ccid, struct sock *sk)
 {
+	struct dccp_sock *dp = dccp_sk(sk);
 	struct ccid3_hc_tx_sock *hc = ccid_priv(ccid);
 
 	hc->tx_state = TFRC_SSTATE_NO_SENT;
 	hc->tx_hist  = NULL;
 	hc->sk	     = sk;
-	timer_setup(&hc->tx_no_feedback_timer,
+	timer_setup(&dp->dccps_ccid_timer,
 		    ccid3_hc_tx_no_feedback_timer, 0);
 	return 0;
 }
 
 static void ccid3_hc_tx_exit(struct sock *sk)
 {
+	struct dccp_sock *dp = dccp_sk(sk);
 	struct ccid3_hc_tx_sock *hc = ccid3_hc_tx_sk(sk);
 
-	sk_stop_timer(sk, &hc->tx_no_feedback_timer);
+	sk_stop_timer(sk, &dp->dccps_ccid_timer);
 	tfrc_tx_hist_purge(&hc->tx_hist);
 }
 
