@@ -126,25 +126,20 @@ static void dccp_tasklet_schedule(struct sock *sk)
 
 static void ccid2_hc_tx_rto_expire(struct timer_list *t)
 {
-	struct dccp_sock *dp = from_timer(dp, t, dccps_ccid_timer);
-	struct sock *sk = (struct sock *)dp;
-	struct ccid2_hc_tx_sock *hc;
-	bool sender_was_blocked;
+	struct ccid2_hc_tx_sock *hc = from_timer(hc, t, tx_rtotimer);
+	struct sock *sk = hc->sk;
+	const bool sender_was_blocked = ccid2_cwnd_network_limited(hc);
 
 	bh_lock_sock(sk);
-
-	if (inet_sk_state_load(sk) == DCCP_CLOSED)
-		goto out;
-
-	hc = ccid_priv(dp->dccps_hc_tx_ccid);
-	sender_was_blocked = ccid2_cwnd_network_limited(hc);
-
 	if (sock_owned_by_user(sk)) {
-		sk_reset_timer(sk, &dp->dccps_ccid_timer, jiffies + HZ / 5);
+		sk_reset_timer(sk, &hc->tx_rtotimer, jiffies + HZ / 5);
 		goto out;
 	}
 
 	ccid2_pr_debug("RTO_EXPIRE\n");
+
+	if (sk->sk_state == DCCP_CLOSED)
+		goto out;
 
 	/* back-off timer */
 	hc->tx_rto <<= 1;
@@ -171,7 +166,7 @@ static void ccid2_hc_tx_rto_expire(struct timer_list *t)
 	if (sender_was_blocked)
 		dccp_tasklet_schedule(sk);
 	/* restart backed-off timer */
-	sk_reset_timer(sk, &dp->dccps_ccid_timer, jiffies + hc->tx_rto);
+	sk_reset_timer(sk, &hc->tx_rtotimer, jiffies + hc->tx_rto);
 out:
 	bh_unlock_sock(sk);
 	sock_put(sk);
@@ -335,7 +330,7 @@ static void ccid2_hc_tx_packet_sent(struct sock *sk, unsigned int len)
 	}
 #endif
 
-	sk_reset_timer(sk, &dp->dccps_ccid_timer, jiffies + hc->tx_rto);
+	sk_reset_timer(sk, &hc->tx_rtotimer, jiffies + hc->tx_rto);
 
 #ifdef CONFIG_IP_DCCP_CCID2_DEBUG
 	do {
@@ -705,9 +700,9 @@ static void ccid2_hc_tx_packet_recv(struct sock *sk, struct sk_buff *skb)
 
 	/* restart RTO timer if not all outstanding data has been acked */
 	if (hc->tx_pipe == 0)
-		sk_stop_timer(sk, &dp->dccps_ccid_timer);
+		sk_stop_timer(sk, &hc->tx_rtotimer);
 	else
-		sk_reset_timer(sk, &dp->dccps_ccid_timer, jiffies + hc->tx_rto);
+		sk_reset_timer(sk, &hc->tx_rtotimer, jiffies + hc->tx_rto);
 done:
 	/* check if incoming Acks allow pending packets to be sent */
 	if (sender_was_blocked && !ccid2_cwnd_network_limited(hc))
@@ -742,18 +737,17 @@ static int ccid2_hc_tx_init(struct ccid *ccid, struct sock *sk)
 	hc->tx_last_cong = hc->tx_lsndtime = hc->tx_cwnd_stamp = ccid2_jiffies32;
 	hc->tx_cwnd_used = 0;
 	hc->sk		 = sk;
-	timer_setup(&dp->dccps_ccid_timer, ccid2_hc_tx_rto_expire, 0);
+	timer_setup(&hc->tx_rtotimer, ccid2_hc_tx_rto_expire, 0);
 	INIT_LIST_HEAD(&hc->tx_av_chunks);
 	return 0;
 }
 
 static void ccid2_hc_tx_exit(struct sock *sk)
 {
-	struct dccp_sock *dp = dccp_sk(sk);
 	struct ccid2_hc_tx_sock *hc = ccid2_hc_tx_sk(sk);
 	int i;
 
-	sk_stop_timer(sk, &dp->dccps_ccid_timer);
+	sk_stop_timer(sk, &hc->tx_rtotimer);
 
 	for (i = 0; i < hc->tx_seqbufc; i++)
 		kfree(hc->tx_seqbuf[i]);
