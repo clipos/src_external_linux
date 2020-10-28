@@ -259,6 +259,7 @@ struct dccp_ackvec;
  * @dccps_sync_scheduled - flag which signals "send out-of-band message soon"
  * @dccps_xmitlet - tasklet scheduled by the TX CCID to dequeue data packets
  * @dccps_xmit_timer - used by the TX CCID to delay sending (rate-based pacing)
+ * @dccps_ccid_timer - used by the CCIDs
  * @dccps_syn_rtt - RTT sample from Request/Response exchange (in usecs)
  */
 struct dccp_sock {
@@ -303,6 +304,7 @@ struct dccp_sock {
 	__u8				dccps_sync_scheduled:1;
 	struct tasklet_struct		dccps_xmitlet;
 	struct timer_list		dccps_xmit_timer;
+	struct timer_list		dccps_ccid_timer;
 };
 
 static inline struct dccp_sock *dccp_sk(const struct sock *sk)
